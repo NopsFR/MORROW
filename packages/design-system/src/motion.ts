@@ -35,7 +35,17 @@ export function transition(properties: readonly string[], category: MotionCatego
  * The environment's behaviour per MORROW state. Values are normalised 0..1 and
  * mapped onto CSS custom properties by the environment layer.
  */
-export const AMBIENT_STATES = ["IDLE", "LISTENING", "THINKING", "EXECUTING", "ERROR", "COMPLETED"] as const;
+export const AMBIENT_STATES = [
+  "IDLE",
+  "LISTENING",
+  "PLANNING",
+  "EXECUTING",
+  "WAITING",
+  "VERIFYING",
+  "RECOVERING",
+  "COMPLETED",
+  "FAILED",
+] as const;
 export type AmbientState = (typeof AMBIENT_STATES)[number];
 
 export interface AmbientParams {
@@ -47,7 +57,7 @@ export interface AmbientParams {
   readonly convergence: number;
   /** Directional flow of the structure (execution has a direction). */
   readonly flow: number;
-  /** Momentary instability; only ERROR raises it, then the environment recovers. */
+  /** Momentary instability; only FAILED raises it, then the environment recovers. */
   readonly instability: number;
   /** Seconds per ambient drift cycle; slower is calmer. */
   readonly driftSeconds: number;
@@ -55,15 +65,21 @@ export interface AmbientParams {
 
 export const ambient: Record<AmbientState, AmbientParams> = {
   IDLE: { fog: 0.55, illumination: 0.35, convergence: 0.0, flow: 0.0, instability: 0, driftSeconds: 48 },
+  /** The user is composing, or MORROW awaits the user's decision. */
   LISTENING: { fog: 0.45, illumination: 0.5, convergence: 0.2, flow: 0.0, instability: 0, driftSeconds: 48 },
-  THINKING: { fog: 0.5, illumination: 0.45, convergence: 0.6, flow: 0.0, instability: 0, driftSeconds: 32 },
+  PLANNING: { fog: 0.5, illumination: 0.45, convergence: 0.6, flow: 0.0, instability: 0, driftSeconds: 32 },
   EXECUTING: { fog: 0.42, illumination: 0.55, convergence: 0.35, flow: 1.0, instability: 0, driftSeconds: 24 },
-  ERROR: { fog: 0.6, illumination: 0.3, convergence: 0.0, flow: 0.0, instability: 1, driftSeconds: 48 },
+  /** Blocked on something outside MORROW (e.g. no model): dimmer, slower. */
+  WAITING: { fog: 0.62, illumination: 0.26, convergence: 0.0, flow: 0.0, instability: 0, driftSeconds: 64 },
+  /** Checking evidence: gathered and still. */
+  VERIFYING: { fog: 0.46, illumination: 0.5, convergence: 0.8, flow: 0.0, instability: 0, driftSeconds: 40 },
+  RECOVERING: { fog: 0.55, illumination: 0.38, convergence: 0.3, flow: 0.3, instability: 0, driftSeconds: 32 },
   COMPLETED: { fog: 0.5, illumination: 0.42, convergence: 0.1, flow: 0.0, instability: 0, driftSeconds: 56 },
+  FAILED: { fog: 0.6, illumination: 0.3, convergence: 0.0, flow: 0.0, instability: 1, driftSeconds: 48 },
 };
 
-/** How long a transient state (ERROR, COMPLETED) holds before settling back. */
+/** How long a transient state (FAILED, COMPLETED) holds before settling back. */
 export const TRANSIENT_AMBIENT_MS: Partial<Record<AmbientState, number>> = {
-  ERROR: 1400,
+  FAILED: 1400,
   COMPLETED: 2400,
 };

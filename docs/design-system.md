@@ -69,14 +69,34 @@ Motion is **state-driven** (it happens because state changed), **interruptible**
 The environment's only input is the **ambient state**, derived from real runtime state
 (`runtime/ambient.ts`):
 
-| State | Trigger | Behaviour |
+| State | Trigger (real task status) | Behaviour |
 |---|---|---|
-| IDLE | nothing active | slow drift, lowest illumination |
-| LISTENING | composing an objective, or MORROW awaiting a permission decision | fog thins, light rises slightly |
-| THINKING | a task is PLANNING / VERIFYING / RECOVERING | structure converges toward the focal point |
+| IDLE | nothing open | slow drift, lowest illumination |
+| LISTENING | composing an objective, or a task is AWAITING_PERMISSION | fog thins, light rises slightly |
+| PLANNING | a task is PLANNING | structure converges toward the focal point |
 | EXECUTING | a task is EXECUTING / OBSERVING | the floor gains direction (slow forward flow) |
-| ERROR | a task or tool failed (transient, 1.4s) | brief destabilisation, then recovery |
+| WAITING | a task is WAITING (e.g. no model) | dimmer, slower |
+| VERIFYING | a task is VERIFYING | gathered and still |
+| RECOVERING | a task is RECOVERING | partial convergence, slight flow |
 | COMPLETED | a task completed (transient, 2.4s) | settles |
+| FAILED | a task or tool failed (transient, 1.4s) | brief destabilisation, then recovery |
+
+With several tasks open, active work takes precedence: EXECUTING, then RECOVERING,
+then VERIFYING, then PLANNING, then LISTENING, then WAITING.
+
+## Task workspace
+
+- **Layout.** A task rail on the left, and the selected task's live view above the
+  command field. Closing the view returns to the quiet idle workspace.
+- **Structure through lines, not cards.** Plan steps, checks and artifacts are rows
+  separated by rules. The activity timeline is a single vertical line with small
+  state marks, and tool calls expand in place using native `<details>`.
+- **Decisions awaiting the user** (permission requests, memory proposals) are the only
+  bordered planes. They carry a brass edge, because MORROW is waiting on you.
+- **The active step** is marked with a brass rule and its step number.
+- **Mono** is used for identifiers, times, capabilities, tool ids and observation content.
+- **Verification** labels every check as either *checked by MORROW* or *judged by the
+  model*, so model judgement is never presented as objective fact.
 
 Parameters are registered CSS properties (`@property`) so they interpolate over LONG.
 

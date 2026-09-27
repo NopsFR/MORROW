@@ -37,10 +37,11 @@ describe("motion", () => {
     );
   });
 
-  it("defines ambient behaviour for each MORROW state; only ERROR destabilises", () => {
+  it("defines ambient behaviour for each MORROW state; only FAILED destabilises", () => {
     for (const s of AMBIENT_STATES) expect(ambient[s]).toBeDefined();
-    expect(AMBIENT_STATES.filter((s) => ambient[s].instability > 0)).toEqual(["ERROR"]);
+    expect(AMBIENT_STATES.filter((s) => ambient[s].instability > 0)).toEqual(["FAILED"]);
     expect(ambient.EXECUTING.flow).toBeGreaterThan(ambient.IDLE.flow);
-    expect(ambient.THINKING.convergence).toBeGreaterThan(ambient.IDLE.convergence);
+    expect(ambient.PLANNING.convergence).toBeGreaterThan(ambient.IDLE.convergence);
+    expect(ambient.WAITING.illumination).toBeLessThan(ambient.IDLE.illumination);
   });
 });

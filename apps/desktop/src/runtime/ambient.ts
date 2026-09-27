@@ -4,22 +4,28 @@ import type { Task, TaskStatus } from "@morrow/schemas";
 export interface AmbientInputs {
   readonly tasks: readonly Pick<Task, "status">[];
   readonly inputFocused: boolean;
-  readonly transient: { readonly state: "ERROR" | "COMPLETED"; readonly until: number } | null;
+  readonly transient: { readonly state: "FAILED" | "COMPLETED"; readonly until: number } | null;
   readonly now: number;
 }
 
-const EXECUTING: readonly TaskStatus[] = ["EXECUTING", "OBSERVING"];
-const THINKING: readonly TaskStatus[] = ["PLANNING", "VERIFYING", "RECOVERING"];
-
 /**
- * The environment reflects what MORROW is actually doing — derived from real task
- * state, never set for effect. Precedence: a brief transient (error/completion),
- * then execution, then thinking, then the user's attention, then idle.
+ * Which task status the environment reflects, in precedence order when several
+ * tasks are open: active work outranks waiting on the user, which outranks being
+ * blocked. Derived from real task state only.
  */
+const PRECEDENCE: ReadonlyArray<readonly [readonly TaskStatus[], AmbientState]> = [
+  [["EXECUTING", "OBSERVING"], "EXECUTING"],
+  [["RECOVERING"], "RECOVERING"],
+  [["VERIFYING"], "VERIFYING"],
+  [["PLANNING"], "PLANNING"],
+  [["AWAITING_PERMISSION"], "LISTENING"],
+  [["WAITING"], "WAITING"],
+];
+
 export function deriveAmbient({ tasks, inputFocused, transient, now }: AmbientInputs): AmbientState {
   if (transient && transient.until > now) return transient.state;
-  if (tasks.some((t) => EXECUTING.includes(t.status))) return "EXECUTING";
-  if (tasks.some((t) => THINKING.includes(t.status))) return "THINKING";
-  if (inputFocused || tasks.some((t) => t.status === "AWAITING_PERMISSION")) return "LISTENING";
-  return "IDLE";
+  for (const [statuses, state] of PRECEDENCE) {
+    if (tasks.some((t) => statuses.includes(t.status))) return state;
+  }
+  return inputFocused ? "LISTENING" : "IDLE";
 }

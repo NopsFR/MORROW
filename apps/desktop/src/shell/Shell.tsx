@@ -1,5 +1,6 @@
 import { useMorrow, clearNotice } from "../runtime/store";
 import { NavRail } from "./NavRail";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { StatusLine } from "./StatusLine";
 import { useSection, type Section } from "./navigation";
 import { WorkspaceView } from "../views/workspace/WorkspaceView";
@@ -27,7 +28,9 @@ export function Shell() {
       <NavRail />
       <main className="shell__main" data-section={section}>
         <Notice />
-        <View key={section} />
+        <ErrorBoundary label={section.toLowerCase()} resetKey={section}>
+          <View key={section} />
+        </ErrorBoundary>
       </main>
       <StatusLine />
     </div>

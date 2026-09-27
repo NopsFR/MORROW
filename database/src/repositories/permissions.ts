@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import type { Id } from "@morrow/shared";
 import {
   PermissionGrantSchema,
@@ -77,6 +77,16 @@ export class SqlitePermissionRequestRepository implements PermissionRequestRepos
       .from(permissionRequests)
       .where(eq(permissionRequests.status, "PENDING"))
       .orderBy(desc(permissionRequests.createdAt))
+      .all()
+      .map((row) => PermissionRequestSchema.parse(row));
+  }
+
+  listByTask(taskId: Id<"task">): PermissionRequest[] {
+    return this.db
+      .select()
+      .from(permissionRequests)
+      .where(eq(permissionRequests.taskId, taskId))
+      .orderBy(asc(permissionRequests.createdAt))
       .all()
       .map((row) => PermissionRequestSchema.parse(row));
   }

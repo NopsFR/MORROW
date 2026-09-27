@@ -82,7 +82,6 @@ export class ToolRuntime {
     if (!tool) throw new MorrowError("TOOL_NOT_FOUND", `No tool registered as ${request.toolId}`);
 
     let execution = this.begin(tool, request);
-    const startedAtMs = this.deps.clock.now();
     const env: ToolEnvironment = {
       taskId: request.taskId,
       projectId: request.projectId,
@@ -109,9 +108,9 @@ export class ToolRuntime {
 
       execution = this.markRunning(execution, tool);
       const output = await this.runWithTimeout(tool, parsed.data, env, execution, request.signal);
-      return this.succeed(tool, execution, output, startedAtMs);
+      return this.succeed(tool, execution, output);
     } catch (error) {
-      return { execution: this.fail(tool, execution, error, startedAtMs), observation: null };
+      return { execution: this.fail(tool, execution, error), observation: null };
     }
   }
 
@@ -310,7 +309,7 @@ export class ToolRuntime {
     }
   }
 
-  private succeed(tool: AnyTool, execution: ToolExecution, rawOutput: unknown, startedAtMs: number): ToolCallOutcome {
+  private succeed(tool: AnyTool, execution: ToolExecution, rawOutput: unknown): ToolCallOutcome {
     const checked = tool.outputSchema.safeParse(rawOutput);
     if (!checked.success) {
       throw new ToolCallFailure({ code: "INVALID_OUTPUT", message: "Tool output failed validation" }, "FAILED");
@@ -334,7 +333,8 @@ export class ToolRuntime {
         actor: { kind: "TOOL", id: tool.id },
         taskId: done.taskId,
         correlationId: done.id,
-        payload: { executionId: done.id, toolId: tool.id, durationMs: Math.max(0, now - startedAtMs) },
+        // Duration is the tool's own running time, excluding any wait for permission.
+        payload: { executionId: done.id, toolId: tool.id, durationMs: Math.max(0, now - (done.startedAt ?? now)) },
       });
       this.deps.observations.insert(observation);
       emit({
@@ -348,7 +348,7 @@ export class ToolRuntime {
     return { execution: done, observation };
   }
 
-  private fail(tool: AnyTool, execution: ToolExecution, error: unknown, startedAtMs: number): ToolExecution {
+  private fail(tool: AnyTool, execution: ToolExecution, error: unknown): ToolExecution {
     const shape = toErrorShape(error);
     const status = error instanceof ToolCallFailure ? error.finalStatus : "FAILED";
     const now = this.deps.clock.now();
@@ -364,7 +364,7 @@ export class ToolRuntime {
           executionId: failed.id,
           toolId: tool.id,
           error: shape,
-          durationMs: failed.startedAt === null ? null : Math.max(0, now - startedAtMs),
+          durationMs: failed.startedAt === null ? null : Math.max(0, now - failed.startedAt),
         },
       });
     });

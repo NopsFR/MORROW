@@ -151,3 +151,46 @@ without changing the agent core; the router still enforces requirements.
 for it, so the ABI matches by construction, and verifies by running the assembled copy
 outside the repo. Choosing and pinning a Node release for official builds (and code
 signing) is left to the release process.
+
+---
+
+## Task workspace (third milestone)
+
+### D33 — The runtime assembles task detail; the UI does not stitch sources
+`task.detail` returns everything persisted about a task (plan, steps, executions,
+permission requests, observations, artifacts, memories with sources, models used).
+One call, one consistent read, and the UI never needs to know table relationships.
+
+### D34 — Event-triggered re-reads instead of client-side reduction
+The UI does not apply events to its own copy of task state. A live event for the
+selected task triggers a coalesced re-read of `task.detail` plus the events after the
+last known sequence. This keeps a single source of truth (the runtime), heals dropped
+notifications, and costs one local IPC round-trip per burst — no polling.
+
+### D35 — Only the selected task is followed in detail
+The task list is refreshed on lifecycle events; full detail is loaded only for the
+task on screen. Other tasks' events do not trigger detail reads.
+
+### D36 — Tool duration measures running time only
+`TOOL_COMPLETED.durationMs` previously counted from the request, so it included the
+time the user took to answer a permission prompt (a live run showed 500 ms vs a 3 ms
+execution). It now measures from when the tool started running.
+
+### D37 — Ambient states mirror task phases
+The environment's states are now IDLE, LISTENING, PLANNING, EXECUTING, WAITING,
+VERIFYING, RECOVERING, COMPLETED, FAILED (THINKING/ERROR retired), derived from real
+task statuses with a fixed precedence when several tasks are open.
+
+### D38 — Error boundaries per region
+A rendering failure in the task view or a section is contained and reported in place
+instead of blanking the whole environment (found when a transient dev-server state
+blanked the app).
+
+### D39 — Verification labels who judged each check
+Structural checks are "checked by MORROW"; plan criteria are "judged by the model;
+cited evidence checked by MORROW". Memory confidence is labelled as assigned, not
+measured. Model judgement is never presented as objective truth.
+
+### D40 — Development reset is a script, not a manual procedure
+`scripts/reset-dev-state.mjs` (dry run by default) removes only MORROW's app data,
+WebView data and live-check temp directories.

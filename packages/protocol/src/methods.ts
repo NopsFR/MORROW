@@ -1,12 +1,9 @@
 import { z } from "zod";
+import { TaskDetailSchema } from "./task-detail";
 import {
-  ArtifactSchema,
   ModelIdSchema,
   ModelPreferencesSchema,
   ModelPurposeSchema,
-  ObservationSchema,
-  TaskStepSchema,
-  ToolExecutionSchema,
   InitCheckSchema,
   MemoryIdSchema,
   MemoryRelationSchema,
@@ -68,16 +65,7 @@ export const RPC_METHODS = {
     z.object({ statuses: z.array(TaskStatusSchema).optional(), limit: z.number().int().min(1).max(500).optional() }),
     z.array(TaskSchema),
   ),
-  "task.detail": method(
-    z.object({ taskId: TaskIdSchema }),
-    z.object({
-      task: TaskSchema,
-      steps: z.array(TaskStepSchema),
-      executions: z.array(ToolExecutionSchema),
-      observations: z.array(ObservationSchema),
-      artifacts: z.array(ArtifactSchema),
-    }),
-  ),
+  "task.detail": method(z.object({ taskId: TaskIdSchema }), TaskDetailSchema),
   "task.pause": method(z.object({ taskId: TaskIdSchema }), TaskSchema),
   "task.resume": method(z.object({ taskId: TaskIdSchema }), TaskSchema),
   "task.cancel": method(z.object({ taskId: TaskIdSchema, reason: z.string().max(500).optional() }), TaskSchema),

@@ -16,6 +16,7 @@ import { ModelPreferencesSchema, type Project } from "@morrow/schemas";
 import { MODEL_PREFERENCES_KEY } from "../model/gateway";
 import type { Runtime } from "./container";
 import { runInitChecks } from "./init-checks";
+import { readTaskDetail } from "./task-detail";
 import type { InterruptionReport } from "../recovery";
 
 export const RUNTIME_VERSION = "0.1.0";
@@ -79,13 +80,7 @@ export function createHandlers({ runtime: rt, recovery, background }: HostContex
       return task;
     },
     "task.list": (params) => rt.taskService.list({ ...params }),
-    "task.detail": ({ taskId }) => ({
-      task: rt.taskService.get(taskId),
-      steps: rt.repos.taskSteps.listByTask(taskId),
-      executions: rt.repos.toolExecutions.listByTask(taskId),
-      observations: rt.repos.observations.listByTask(taskId),
-      artifacts: rt.repos.artifacts.listByTask(taskId),
-    }),
+    "task.detail": ({ taskId }) => readTaskDetail(rt, taskId),
     "task.pause": ({ taskId }) => rt.orchestrator.pause(taskId, USER),
     "task.resume": ({ taskId }) => {
       const { task, completion } = rt.orchestrator.resume(taskId, USER);

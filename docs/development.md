@@ -64,6 +64,32 @@ pnpm live:agent --workspace <dir> --objective "What version is this project?"
 node scripts/desktop-live-check.mjs --workspace <dir> --objective "<task>" [--cancel-open] [--screenshot out.png]
 ```
 
+`desktop-live-check.mjs` also accepts:
+
+- `--accept-memory`: accept the task's memory proposal through the UI;
+- `--mid-screenshot <png>`: capture the task view while it awaits permission;
+- `--cancel-open`: cancel tasks left open by earlier runs.
+
+## Resetting local state
+
+Live checks and manual testing write to the app's real data directory. To return to
+a clean first launch:
+
+```bash
+node scripts/reset-dev-state.mjs          # dry run: lists what would be removed
+node scripts/reset-dev-state.mjs --yes    # quit MORROW first
+```
+
+This removes the app data directory (the database), the app's WebView data, and the
+temporary directories created by live checks (`morrow-live-*`, `morrow-ws-*`,
+`morrow-runtime-verify-*`).
+
+It does not touch the repository, test fixtures (tests create and delete their own
+temp directories), Ollama or its models, or the assembled bundled runtime.
+
+On the next launch MORROW creates a fresh database, applies all migrations, and
+registers the local Ollama provider.
+
 Unit tests never call a real model. `tests/unit/scripted-ollama.ts` is a test double
 that speaks the Ollama HTTP protocol from a script, so every branch of the loop is
 deterministic.

@@ -1,0 +1,374 @@
+/**
+ * Pure projections from runtime data (TaskDetail + the task's events) to what the
+ * task view displays. No values are invented here: everything is read from what
+ * the runtime persisted, and anything absent is shown as absent.
+ */
+import type { MorrowEvent } from "@morrow/events";
+import type {
+  JsonValue,
+  Observation,
+  PermissionRequest,
+  TaskStatus,
+  TaskStep,
+  ToolExecution,
+} from "@morrow/schemas";
+import type { TaskDetail } from "@morrow/protocol";
+import type { Tone } from "@morrow/ui";
+
+// ── Phase ──────────────────────────────────────────────────────────
+
+export interface Phase {
+  readonly label: string;
+  readonly tone: Tone;
+  readonly active: boolean;
+  /** Plain-language description of what MORROW is doing right now. */
+  readonly doing: string;
+}
+
+export function phaseOf(detail: TaskDetail): Phase {
+  const { task, steps } = detail;
+  const step = activeStep(steps);
+  const position = step ? `step ${step.ordinal + 1} of ${steps.length}` : "";
+  // Header text stays short; full reasons are shown in the section they belong to.
+  const reason = task.statusReason ? clipReason(task.statusReason.code, task.statusReason.message) : undefined;
+  const map: Record<TaskStatus, Phase> = {
+    IDLE: { label: "Queued", tone: "neutral", active: false, doing: "Not started" },
+    PLANNING: { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
+    EXECUTING: { label: "Executing", tone: "accent", active: true, doing: step ? `Working on ${position}: ${step.title}` : "Choosing the next action" },
+    OBSERVING: { label: "Observing", tone: "accent", active: true, doing: "Recording what the tool returned" },
+    AWAITING_PERMISSION: {
+      label: "Awaiting permission",
+      tone: "accent",
+      active: true,
+      doing: `Waiting for your decision on a requested operation${step ? ` (${position}: ${step.title})` : ""}`,
+    },
+    VERIFYING: { label: "Verifying", tone: "accent", active: true, doing: "Checking the result against the evidence" },
+    RECOVERING: { label: "Recovering", tone: "warning", active: true, doing: reason ?? "Recovering from a failed or denied action" },
+    WAITING: { label: "Waiting", tone: "warning", active: false, doing: reason ?? "Waiting" },
+    PAUSED: { label: "Paused", tone: "neutral", active: false, doing: reason ?? "Paused" },
+    COMPLETED: { label: "Completed", tone: "success", active: false, doing: "Finished and verified" },
+    FAILED: { label: "Failed", tone: "error", active: false, doing: reason ?? "Failed" },
+    CANCELLED: { label: "Cancelled", tone: "neutral", active: false, doing: reason ?? "Cancelled" },
+  };
+  return map[task.status];
+}
+
+function clipReason(code: string, message: string): string {
+  if (code === "VERIFICATION_FAILED") return "The result did not pass verification — see Verification";
+  return message.length > 180 ? `${message.slice(0, 177)}…` : message;
+}
+
+export function activeStep(steps: readonly TaskStep[]): TaskStep | null {
+  return steps.find((s) => s.status === "RUNNING") ?? null;
+}
+
+/** Elapsed working time: from start to end (or now while the task is still open). */
+export function elapsedMs(detail: TaskDetail, now: number): number | null {
+  const { startedAt, endedAt } = detail.task;
+  if (startedAt === null) return null;
+  return Math.max(0, (endedAt ?? now) - startedAt);
+}
+
+export function formatDuration(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms < 1000) return `${ms} ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)} s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${Math.round(s % 60)}s`;
+}
+
+export function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// ── Inputs and values ──────────────────────────────────────────────
+
+/** A one-line summary of a tool input, e.g. `path: notes.txt · content: 128 chars`. */
+export function summarizeInput(input: JsonValue | null): string {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return input === null ? "—" : String(input);
+  return Object.entries(input)
+    .map(([k, v]) => {
+      if (typeof v === "string") return v.length > 60 ? `${k}: ${v.length} chars` : `${k}: ${v}`;
+      if (v === null || typeof v !== "object") return `${k}: ${String(v)}`;
+      return `${k}: ${Array.isArray(v) ? `${v.length} items` : "{…}"}`;
+    })
+    .join(" · ");
+}
+
+// ── Plan ───────────────────────────────────────────────────────────
+
+export interface PlanStepView {
+  readonly step: TaskStep;
+  readonly number: number;
+  readonly active: boolean;
+  /** Tools the plan expected, and tools actually used with their outcomes. */
+  readonly expectedTools: readonly string[];
+  readonly calls: readonly { toolId: string; status: ToolExecution["status"] }[];
+}
+
+export function planSteps(detail: TaskDetail): PlanStepView[] {
+  return detail.steps.map((step) => ({
+    step,
+    number: step.ordinal + 1,
+    active: step.status === "RUNNING",
+    expectedTools: step.expectedToolIds,
+    calls: detail.executions.filter((e) => e.stepId === step.id).map((e) => ({ toolId: e.toolId, status: e.status })),
+  }));
+}
+
+// ── Tool runs ──────────────────────────────────────────────────────
+
+export interface ToolRun {
+  readonly execution: ToolExecution;
+  readonly inputSummary: string;
+  readonly permission: PermissionRequest | null;
+  readonly durationMs: number | null;
+  readonly observation: Observation | null;
+}
+
+export function toolRuns(detail: TaskDetail): ToolRun[] {
+  return detail.executions.map((execution) => ({
+    execution,
+    inputSummary: summarizeInput(execution.input),
+    permission: detail.permissionRequests.filter((r) => r.executionId === execution.id).at(-1) ?? null,
+    durationMs:
+      execution.startedAt !== null && execution.finishedAt !== null ? execution.finishedAt - execution.startedAt : null,
+    observation:
+      detail.observations.find((o) => o.source.kind === "TOOL_EXECUTION" && o.source.executionId === execution.id) ??
+      null,
+  }));
+}
+
+// ── Activity timeline ──────────────────────────────────────────────
+
+export interface TimelineEntry {
+  readonly sequence: number;
+  readonly time: number;
+  readonly type: MorrowEvent["type"];
+  readonly title: string;
+  readonly summary: string;
+  readonly tone: Tone;
+  /** Present for TOOL_REQUESTED: the whole lifecycle of that call. */
+  readonly toolRun?: ToolRun;
+}
+
+/** Event types too fine-grained to show on their own (their information appears elsewhere). */
+const HIDDEN: ReadonlySet<MorrowEvent["type"]> = new Set(["MODEL_INVOKED", "TOOL_STARTED"]);
+
+export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): TimelineEntry[] {
+  const runs = new Map(toolRuns(detail).map((r) => [r.execution.id as string, r]));
+  const modelName = (id: string) => detail.models.find((m) => m.modelId === id)?.providerModelId ?? "model";
+  const entries: TimelineEntry[] = [];
+  for (const e of events) {
+    if (HIDDEN.has(e.type)) continue;
+    const base = { sequence: e.sequence, time: e.occurredAt, type: e.type };
+    const push = (title: string, summary: string, tone: Tone = "neutral", extra: Partial<TimelineEntry> = {}) =>
+      entries.push({ ...base, title, summary, tone, ...extra });
+    switch (e.type) {
+      case "TASK_CREATED":
+        push("Task created", e.payload.objective);
+        break;
+      case "TASK_STARTED":
+      case "TASK_STATE_CHANGED":
+      case "TASK_PAUSED":
+      case "TASK_RESUMED":
+        push(stateTitle(e.payload.to), e.payload.reason ? e.payload.reason.message : `${human(e.payload.from)} → ${human(e.payload.to)}`, e.payload.to === "RECOVERING" || e.payload.to === "WAITING" ? "warning" : "neutral");
+        break;
+      case "TASK_COMPLETED":
+        push("Task completed", "Result verified", "success");
+        break;
+      case "TASK_FAILED":
+        push("Task failed", e.payload.reason ? `${e.payload.reason.code} — ${e.payload.reason.message}` : "", "error");
+        break;
+      case "TASK_CANCELLED":
+        push("Task cancelled", e.payload.reason?.message ?? "");
+        break;
+      case "PLAN_CREATED":
+        push("Plan created", `${e.payload.steps.length} step${e.payload.steps.length === 1 ? "" : "s"} · ${e.payload.summary}`, "accent");
+        break;
+      case "PLAN_UPDATED":
+        push("Plan updated", e.payload.reason, "accent");
+        break;
+      case "MODEL_RESPONDED":
+        push(
+          `Model · ${e.payload.purpose.toLowerCase()}`,
+          `${modelName(e.payload.modelId)} · ${formatDuration(e.payload.latencyMs)} · ${e.payload.outcome === "VALID" ? "valid output" : e.payload.outcome === "INVALID_OUTPUT" ? "invalid output" : "call failed"}`,
+          e.payload.outcome === "VALID" ? "neutral" : "warning",
+        );
+        break;
+      case "TOOL_REQUESTED": {
+        const run = runs.get(e.payload.executionId);
+        push(`Tool requested · ${e.payload.toolId}`, summarizeInput(e.payload.input), "accent", run ? { toolRun: run } : {});
+        break;
+      }
+      case "TOOL_PERMISSION_REQUIRED":
+        push(`Permission required · ${e.payload.capability}`, `${e.payload.riskLevel} risk · ${e.payload.reason}`, "accent");
+        break;
+      case "PERMISSION_RESOLVED":
+        push(
+          `Permission ${e.payload.outcome.toLowerCase()}`,
+          e.payload.scope ? `scope: ${human(e.payload.scope).toLowerCase()}` : "",
+          e.payload.outcome === "GRANTED" ? "success" : e.payload.outcome === "DENIED" ? "error" : "neutral",
+        );
+        break;
+      case "TOOL_OUTPUT":
+        push(`Tool output · ${e.payload.channel}`, e.payload.content.slice(0, 160));
+        break;
+      case "TOOL_COMPLETED":
+        push(`Tool completed · ${e.payload.toolId}`, formatDuration(e.payload.durationMs), "success");
+        break;
+      case "TOOL_FAILED":
+        push(`Tool failed · ${e.payload.toolId}`, `${e.payload.error.code} — ${e.payload.error.message}`, "error");
+        break;
+      case "OBSERVATION_CREATED":
+        push("Observation recorded", e.payload.summary);
+        break;
+      case "VERIFICATION_STARTED":
+        push("Verification started", `${e.payload.criteria.length} criteria`, "accent");
+        break;
+      case "VERIFICATION_PASSED":
+        push("Verification passed", `${e.payload.evidence.length} checks satisfied`, "success");
+        break;
+      case "VERIFICATION_FAILED":
+        push("Verification failed", e.payload.reasons.join("; "), "error");
+        break;
+      case "MEMORY_PROPOSED":
+        push("Memory proposed", `${human(e.payload.type)} · awaiting your decision`, "accent");
+        break;
+      case "MEMORY_CREATED":
+        push("Memory accepted", human(e.payload.type), "success");
+        break;
+      case "MEMORY_UPDATED":
+        push(`Memory ${human(e.payload.change).toLowerCase()}`, human(e.payload.status));
+        break;
+      case "ARTIFACT_CREATED":
+        push(`Artifact created · ${e.payload.title}`, e.payload.uri, "success");
+        break;
+      default:
+        break;
+    }
+  }
+  return entries;
+}
+
+function human(s: string): string {
+  return s.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function stateTitle(to: TaskStatus): string {
+  return human(to);
+}
+
+// ── Observations ───────────────────────────────────────────────────
+
+export interface ObservationView {
+  readonly observation: Observation;
+  readonly source: string;
+  readonly kind: string;
+  readonly content: string;
+  /** Whether the final answer cites this observation. */
+  readonly citedByResult: boolean;
+}
+
+/** Concise, faithful rendering of observation data (never paraphrased). */
+export function conciseContent(data: JsonValue, max = 400): string {
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const d = data as Record<string, JsonValue>;
+    if (typeof d.content === "string") {
+      const head = d.content.length > max ? `${d.content.slice(0, max)}…` : d.content;
+      return `${typeof d.path === "string" ? `${d.path}\n` : ""}${head}`;
+    }
+    if (Array.isArray(d.entries)) {
+      const names = d.entries.map((e) => (e && typeof e === "object" && !Array.isArray(e) ? String(e.name) : String(e)));
+      return `${d.entries.length} entries: ${names.slice(0, 20).join(", ")}${names.length > 20 ? ", …" : ""}`;
+    }
+    if (Array.isArray(d.matches)) {
+      return `${d.matches.length} match${d.matches.length === 1 ? "" : "es"}: ${d.matches.slice(0, 20).join(", ")}${d.matches.length > 20 ? ", …" : ""}`;
+    }
+    if (typeof d.bytesWritten === "number") {
+      return `Wrote ${d.bytesWritten} bytes to ${String(d.path)} (sha256 ${String(d.sha256).slice(0, 12)}…)`;
+    }
+  }
+  const json = JSON.stringify(data);
+  return json.length > max ? `${json.slice(0, max)}…` : json;
+}
+
+export function observations(detail: TaskDetail): ObservationView[] {
+  const cited = new Set(detail.task.result?.observationIds ?? []);
+  return detail.observations.map((observation) => {
+    const src = observation.source;
+    const execution =
+      src.kind === "TOOL_EXECUTION" ? detail.executions.find((e) => e.id === src.executionId) : undefined;
+    return {
+      observation,
+      source: src.kind === "TOOL_EXECUTION" ? execution?.toolId ?? "tool" : src.kind === "SYSTEM" ? src.subsystem : "user",
+      kind: human(src.kind),
+      content: conciseContent(observation.data),
+      citedByResult: cited.has(observation.id),
+    };
+  });
+}
+
+// ── Verification ───────────────────────────────────────────────────
+
+/** Checks MORROW performs itself, as opposed to criteria judged by a model. */
+const DETERMINISTIC = new Set(["Every planned step completed", "The answer cites only real observations"]);
+
+export interface VerificationCheck {
+  readonly description: string;
+  readonly passed: boolean | null;
+  readonly detail: string | null;
+  readonly judgedBy: "MORROW" | "MODEL";
+}
+
+export interface VerificationView {
+  readonly status: "NOT_STARTED" | "RUNNING" | "PASSED" | "FAILED";
+  readonly checks: readonly VerificationCheck[];
+  readonly citedObservationIds: readonly string[];
+  readonly failureReasons: readonly string[];
+}
+
+export function verification(detail: TaskDetail, events: readonly MorrowEvent[]): VerificationView {
+  const started = events.some((e) => e.type === "VERIFICATION_STARTED");
+  const outcome = detail.task.result?.verification ?? null;
+  const status: VerificationView["status"] = outcome
+    ? outcome.passed
+      ? "PASSED"
+      : "FAILED"
+    : started && detail.task.status === "VERIFYING"
+      ? "RUNNING"
+      : "NOT_STARTED";
+
+  const descriptions = [...DETERMINISTIC, ...(detail.plan?.successCriteria ?? [])];
+  const checks = descriptions.map((description): VerificationCheck => {
+    const judgedBy = DETERMINISTIC.has(description) ? "MORROW" : "MODEL";
+    if (!outcome) return { description, passed: null, detail: null, judgedBy };
+    const prefix = `${description}: `;
+    const ok = outcome.evidence.find((s) => s.startsWith(prefix));
+    const bad = outcome.reasons.find((s) => s.startsWith(prefix));
+    return {
+      description,
+      passed: ok ? true : bad ? false : null,
+      detail: (ok ?? bad)?.slice(prefix.length) ?? null,
+      judgedBy,
+    };
+  });
+
+  return {
+    status,
+    checks,
+    citedObservationIds: detail.task.result?.observationIds ?? [],
+    failureReasons: outcome && !outcome.passed ? outcome.reasons : [],
+  };
+}
+
+// ── Decisions awaiting the user ────────────────────────────────────
+
+export function pendingPermissions(detail: TaskDetail): PermissionRequest[] {
+  return detail.permissionRequests.filter((r) => r.status === "PENDING");
+}
+
+export function proposedMemories(detail: TaskDetail) {
+  return detail.memories.filter((m) => m.memory.status === "PROPOSED");
+}

@@ -113,8 +113,8 @@
   background: radial-gradient(130% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
 }
 
-/* ERROR: a brief destabilisation of the structure, then recovery. */
-.env[data-ambient="ERROR"] .env__structure {
+/* FAILED: a brief destabilisation of the structure, then recovery. */
+.env[data-ambient="FAILED"] .env__structure {
   animation: env-destabilise 620ms var(--m-motion-short-easing) 1;
 }
 @keyframes env-destabilise {
@@ -129,7 +129,7 @@
   .env__floor,
   .env__fog--far,
   .env__fog--near,
-  .env[data-ambient="ERROR"] .env__structure {
+  .env[data-ambient="FAILED"] .env__structure {
     animation: none;
   }
 }

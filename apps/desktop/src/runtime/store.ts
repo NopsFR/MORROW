@@ -28,6 +28,7 @@ import {
   RequestError,
   type RuntimeStatus,
 } from "./bridge";
+import { TaskWorkspace, type TaskWorkspaceState } from "./task-workspace";
 
 export type BootPhase = "INITIALIZING" | "READY" | "DEGRADED";
 
@@ -42,7 +43,7 @@ export interface MorrowState {
   readonly tasks: readonly Task[];
   readonly pendingPermissions: readonly PermissionRequest[];
   readonly inputFocused: boolean;
-  readonly transient: { readonly state: "ERROR" | "COMPLETED"; readonly until: number } | null;
+  readonly transient: { readonly state: "FAILED" | "COMPLETED"; readonly until: number } | null;
   /** Last user-facing failure of an action (not of a task). */
   readonly notice: { readonly code: string; readonly message: string } | null;
 }
@@ -152,7 +153,28 @@ export async function initialize(): Promise<void> {
     recordChecks(unavailableChecks(RUNTIME_SUBSYSTEMS, describe(error)).map((c) => ({ ...c, status: "FAILED" as const })));
   }
   await Promise.all([refreshTasks(), refreshPermissions()]);
+  // Open the most recent task that still needs attention, if any.
+  const open = state.tasks.find((t) => !["COMPLETED", "FAILED", "CANCELLED"].includes(t.status));
+  if (open) void taskWorkspace.select(open.id);
   finishBoot();
+}
+
+// ── Selected task ──────────────────────────────────────────────────
+
+/** Read-through view of the selected task, refreshed by the live event stream. */
+export const taskWorkspace = new TaskWorkspace({ request });
+
+export function useTaskWorkspace(): TaskWorkspaceState {
+  return useSyncExternalStore(taskWorkspace.subscribe, taskWorkspace.getState, taskWorkspace.getState);
+}
+
+export function selectTask(taskId: Id<"task"> | null): void {
+  void taskWorkspace.select(taskId);
+}
+
+export async function pauseTask(taskId: Id<"task">): Promise<void> {
+  await act(() => request("task.pause", { taskId }));
+  await refreshTasks();
 }
 
 export function dismissBoot(): void {
@@ -164,17 +186,18 @@ export function dismissBoot(): void {
 let taskRefresh: ReturnType<typeof setTimeout> | null = null;
 
 function handleEvent(event: MorrowEvent): void {
+  taskWorkspace.handleEvent(event);
   if (event.type.startsWith("TASK_")) {
     // Coalesce bursts of lifecycle events into one refresh.
     if (taskRefresh) clearTimeout(taskRefresh);
     taskRefresh = setTimeout(() => void refreshTasks(), 50);
   }
   if (event.type === "TOOL_PERMISSION_REQUIRED" || event.type === "PERMISSION_RESOLVED") void refreshPermissions();
-  if (event.type === "TASK_FAILED" || event.type === "TOOL_FAILED") pulse("ERROR");
+  if (event.type === "TASK_FAILED" || event.type === "TOOL_FAILED") pulse("FAILED");
   if (event.type === "TASK_COMPLETED") pulse("COMPLETED");
 }
 
-function pulse(kind: "ERROR" | "COMPLETED"): void {
+function pulse(kind: "FAILED" | "COMPLETED"): void {
   const ms = TRANSIENT_AMBIENT_MS[kind] ?? 1000;
   set({ transient: { state: kind, until: Date.now() + ms } });
   setTimeout(() => set({ transient: null }), ms + 20);
@@ -204,6 +227,7 @@ export async function submitObjective(objective: string, projectId: Id<"project"
   try {
     const task = await request("task.create", { objective: text, ...(projectId ? { projectId } : {}) });
     set((s) => ({ tasks: [task, ...s.tasks.filter((t) => t.id !== task.id)], notice: null }));
+    void taskWorkspace.select(task.id);
     return true;
   } catch (error) {
     report(error);

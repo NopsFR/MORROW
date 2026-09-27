@@ -74,4 +74,13 @@ export class ModelRepository {
   recordUsage(usage: ModelUsage): void {
     this.db.insert(modelUsage).values(ModelUsageSchema.parse(usage)).run();
   }
+
+  usageByTask(taskId: Id<"task">): ModelUsage[] {
+    return this.db
+      .select()
+      .from(modelUsage)
+      .where(eq(modelUsage.taskId, taskId))
+      .all()
+      .map((row) => ModelUsageSchema.parse(row));
+  }
 }

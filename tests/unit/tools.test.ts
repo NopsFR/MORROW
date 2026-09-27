@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { newId } from "@morrow/shared";
 import type { Runtime } from "@morrow/agent";
-import { AGENT, tempDir, testRuntime, USER } from "./helpers";
+import { AGENT, TestClock, tempDir, testRuntime, USER } from "./helpers";
 
 function projectWithFiles(rt: Runtime) {
   const root = tempDir("morrow-ws-");
@@ -124,6 +124,29 @@ describe("ToolRuntime + filesystem tools", () => {
     });
     expect(second.execution.status).toBe("DENIED");
     expect(second.execution.error?.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("reports tool duration as running time, excluding the wait for permission", async () => {
+    const clock = new TestClock();
+    const rt = testRuntime({ clock });
+    const { project } = projectWithFiles(rt);
+    const off = rt.bus.subscribeTo("TOOL_PERMISSION_REQUIRED", (event) => {
+      off();
+      clock.advance(5_000); // the user takes five seconds to decide
+      queueMicrotask(() =>
+        rt.permissionAuthority.respond({ requestId: event.payload.requestId, decision: "ALLOW", scope: "ONE_TIME" }),
+      );
+    });
+    const { execution } = await rt.toolRuntime.call({
+      toolId: "filesystem.read_text_file",
+      input: { path: "notes.txt" },
+      taskId: null,
+      projectId: project.id,
+      requestedBy: AGENT,
+    });
+    expect(execution.startedAt! - execution.requestedAt).toBe(5_000);
+    const completed = rt.eventLog.list({ types: ["TOOL_COMPLETED"] })[0];
+    expect(completed?.type === "TOOL_COMPLETED" && completed.payload.durationMs).toBe(0);
   });
 
   it("validates input before doing anything", async () => {

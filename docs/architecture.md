@@ -140,6 +140,51 @@ USER INTENT ─ task.create ─▶ TASK (IDLE)
 - **Internal reasoning** is disabled for structured calls (`think: false`) and never
   surfaced. Ollama rejected constrained output from qwen3 when thinking was on.
 
+## Task workspace (UI)
+
+The workspace renders the runtime's state. It does not keep a second copy of it.
+
+```
+runtime tables + event log ─ task.detail / events.list ─▶ TaskWorkspace (UI) ─▶ task view
+            ▲                                                    ▲
+            └────────── morrow://runtime-event (live stream) ────┘  triggers a re-read
+```
+
+- **`task.detail`** (`agent/src/host/task-detail.ts`) assembles one task's state from
+  the runtime's tables:
+  - task and project;
+  - plan (from `PLAN_CREATED`) and steps;
+  - tool executions and permission requests;
+  - observations and artifacts;
+  - memories with their sources;
+  - the models used (from `model_usage`) and their providers.
+- **`TaskWorkspace`** (`apps/desktop/src/runtime/task-workspace.ts`) holds the latest
+  `task.detail` for the selected task and that task's events. On every live event for
+  the task it re-reads both from the runtime, coalescing bursts. Events are fetched
+  incrementally by sequence (`afterSequence`), so a dropped notification is healed by
+  the next one. It never infers or advances task state, and there is no polling.
+- **`task/model.ts`** holds pure projections from that data to what each panel shows:
+  phase, plan, timeline, tool runs, observations and verification. Nothing is invented;
+  absent data is shown as absent.
+- **Panels:**
+  - header: task id, objective, project, state, elapsed time, model and provider, current phase;
+  - decisions: pending permission requests and memory proposals;
+  - result;
+  - plan and success criteria;
+  - verification, with each check labelled as checked by MORROW or judged by the model;
+  - observations;
+  - artifacts;
+  - activity timeline, where tool calls expand to show tool, input, permission,
+    start time, duration and result.
+- **Decisions act through the real services.** Permission answers go to
+  `permission.respond`, and the scopes offered mirror the engine's risk ceilings,
+  which the runtime enforces anyway. Memory answers go to `memory.accept` /
+  `memory.reject`. Nothing is accepted automatically.
+- **Private reasoning is never shown.** Only operational state is: the plan,
+  decisions, observations and verdicts.
+- **The environment** takes its ambient state from the real statuses of the open tasks.
+  See `docs/design-system.md`.
+
 ## Core flow
 
 ```
@@ -361,6 +406,8 @@ Development therefore keeps using `node` from PATH and `agent/dist`.
 - GPU detection.
 - A built and tested installer. The bundled runtime is assembled and verified, but
   `pnpm package` (the NSIS/MSI build) has not been run, and code signing is not set up.
-- A UI view of plans, steps and observations. The protocol exposes them (`task.detail`);
-  the workspace currently shows the status, result and verification only.
+- Streaming of partial model output into the UI. The workspace shows model calls as
+  completed events only.
+- Revealing artifacts in the OS file manager. The workspace shows artifact metadata and
+  URIs but cannot open them yet; that needs a permission-gated native command.
 - Semantic memory retrieval.
