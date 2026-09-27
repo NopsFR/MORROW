@@ -1,0 +1,13 @@
+{
+  "name": "@morrow/permissions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": { "@morrow/shared": "workspace:*", "@morrow/schemas": "workspace:*", "@morrow/events": "workspace:*", "zod": "^4.6.5" }
+}

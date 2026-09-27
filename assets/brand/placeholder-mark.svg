@@ -1,0 +1,10 @@
+<!--
+  PLACEHOLDER — not MORROW's identity mark.
+  A neutral geometric stand-in (a horizon line inside a square frame) used only so
+  the desktop build has an application icon. Replace when the real mark exists.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#0b0c0e"/>
+  <rect x="192" y="192" width="640" height="640" fill="none" stroke="#8d97a5" stroke-width="28"/>
+  <line x1="192" y1="600" x2="832" y2="600" stroke="#c9b58a" stroke-width="28"/>
+</svg>

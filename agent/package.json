@@ -1,0 +1,30 @@
+{
+  "name": "@morrow/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@morrow/database": "workspace:*",
+    "@morrow/events": "workspace:*",
+    "@morrow/memory": "workspace:*",
+    "@morrow/models": "workspace:*",
+    "@morrow/permissions": "workspace:*",
+    "@morrow/protocol": "workspace:*",
+    "@morrow/schemas": "workspace:*",
+    "@morrow/shared": "workspace:*",
+    "@morrow/tools": "workspace:*",
+    "better-sqlite3": "12.11.1",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

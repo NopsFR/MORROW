@@ -1,0 +1,82 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--m-color-background-deep);
+  color: var(--m-color-text-primary);
+  font-family: var(--m-font-sans);
+  font-size: var(--m-type-body-size);
+  line-height: var(--m-type-body-line);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Text the user may want to copy stays selectable. */
+input,
+textarea,
+.m-mono,
+.row,
+.task__title,
+.task__reason,
+.permission__reason {
+  user-select: text;
+}
+
+::selection {
+  background: var(--m-color-accent-muted);
+  color: var(--m-color-text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--m-color-border);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Forms (shared by views) */
+.form {
+  display: grid;
+  gap: var(--m-space-4);
+  max-width: 560px;
+}
+.form__field {
+  display: grid;
+  gap: var(--m-space-2);
+}
+.form__field input {
+  height: 32px;
+  padding: 0 var(--m-space-3);
+  border: 1px solid var(--m-color-border);
+  border-radius: var(--m-radius-xs);
+  background: var(--m-color-surface-inset);
+  color: var(--m-color-text-primary);
+  font-family: var(--m-font-mono);
+  font-size: var(--m-type-meta-size);
+  outline: none;
+  transition: border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing);
+}
+.form__field input:focus {
+  border-color: var(--m-color-accent-line);
+}
+.form__error {
+  margin: 0;
+  color: var(--m-color-error);
+  font-size: var(--m-type-body-small-size);
+}

@@ -1,0 +1,26 @@
+﻿{
+  "name": "@morrow/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@morrow/events": "workspace:*",
+    "@morrow/permissions": "workspace:*",
+    "@morrow/schemas": "workspace:*",
+    "@morrow/shared": "workspace:*",
+    "better-sqlite3": "12.11.1",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "drizzle-kit": "^0.31.11"
+  }
+}

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = [
+  "apps/desktop/src-tauri",
+  "native/system",
+  "native/runtime-bridge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["process", "io-util", "sync", "time", "macros", "rt-multi-thread"] }
+sysinfo = "0.39"
+morrow-system = { path = "native/system" }
+morrow-runtime-bridge = { path = "native/runtime-bridge" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

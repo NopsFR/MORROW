@@ -1,0 +1,13 @@
+[package]
+name = "morrow-runtime-bridge"
+description = "Supervises the MORROW agent runtime process and speaks JSON-RPC to it over stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

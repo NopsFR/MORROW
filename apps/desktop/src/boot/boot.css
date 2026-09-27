@@ -1,0 +1,95 @@
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  /* The boot happens inside the environment, not on a curtain in front of it. */
+  background: transparent;
+  transition: opacity var(--m-motion-medium-duration) var(--m-motion-medium-easing);
+}
+.boot[data-leaving] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot__column {
+  width: min(560px, 86vw);
+  display: grid;
+  gap: var(--m-space-6);
+}
+
+.boot__wordmark {
+  margin: 0;
+  font-family: var(--m-type-display-family);
+  font-size: var(--m-type-display-size);
+  line-height: var(--m-type-display-line);
+  font-weight: var(--m-type-display-weight);
+  letter-spacing: var(--m-type-display-tracking);
+  color: var(--m-color-text-primary);
+}
+
+.boot__lines {
+  list-style: none;
+  margin: 0;
+  padding: var(--m-space-4) 0;
+  border-top: 1px solid var(--m-color-border-subtle);
+  border-bottom: 1px solid var(--m-color-border-subtle);
+  display: grid;
+  gap: var(--m-space-2);
+}
+
+.boot__line {
+  display: grid;
+  grid-template-columns: 112px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: var(--m-space-3);
+  align-items: center;
+  opacity: 0.35;
+  transition: opacity var(--m-motion-short-duration) var(--m-motion-short-easing);
+}
+.boot__line[data-resolved] {
+  opacity: 1;
+}
+.boot__name {
+  font-family: var(--m-type-label-family);
+  font-size: var(--m-type-label-size);
+  letter-spacing: var(--m-type-label-tracking);
+  text-transform: uppercase;
+  color: var(--m-color-text-secondary);
+}
+.boot__leader {
+  height: 1px;
+  background-image: linear-gradient(to right, var(--m-color-border) 50%, transparent 50%);
+  background-size: 6px 1px;
+}
+.boot__pending {
+  font-family: var(--m-font-mono);
+  color: var(--m-color-text-disabled);
+}
+.boot__summary {
+  grid-column: 2 / 4;
+  min-height: 16px;
+  font-family: var(--m-font-mono);
+  font-size: var(--m-type-meta-size);
+  color: var(--m-color-text-muted);
+  text-align: right;
+}
+
+.boot__result {
+  height: 20px;
+  opacity: 0;
+  transition: opacity var(--m-motion-medium-duration) var(--m-motion-medium-easing);
+  font-family: var(--m-type-label-family);
+  font-size: var(--m-type-label-size);
+  letter-spacing: 0.32em;
+}
+.boot__result[data-visible] {
+  opacity: 1;
+}
+.boot__ready {
+  color: var(--m-color-accent);
+}
+.boot__degraded {
+  color: var(--m-color-warning);
+}

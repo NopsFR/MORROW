@@ -1,0 +1,41 @@
+{
+  "name": "morrow",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @morrow/desktop tauri dev",
+    "build": "pnpm --filter @morrow/desktop tauri build",
+    "build:runtime": "pnpm --filter @morrow/agent build",
+    "typecheck": "pnpm -r --parallel typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:rust": "cargo test --workspace",
+    "db:generate": "pnpm --filter @morrow/database generate",
+    "check": "pnpm typecheck && pnpm test && pnpm test:rust"
+  },
+  "devDependencies": {
+    "@morrow/agent": "workspace:*",
+    "@morrow/database": "workspace:*",
+    "@morrow/events": "workspace:*",
+    "@morrow/memory": "workspace:*",
+    "@morrow/models": "workspace:*",
+    "@morrow/permissions": "workspace:*",
+    "@morrow/protocol": "workspace:*",
+    "@morrow/schemas": "workspace:*",
+    "@morrow/shared": "workspace:*",
+    "@morrow/tools": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  }
+}

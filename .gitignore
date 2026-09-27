@@ -1,0 +1,15 @@
+node_modules/
+dist/
+target/
+*.log
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+test-results/
+playwright-report/
+apps/desktop/src-tauri/gen/schemas/
+.vitest-tmp/
