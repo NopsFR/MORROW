@@ -9,3 +9,4 @@ export { ToolCatalogRepository, ToolExecutionRepository } from "./repositories/t
 export { SqlitePermissionGrantRepository, SqlitePermissionRequestRepository } from "./repositories/permissions";
 export { ModelRepository } from "./repositories/models";
 export { SettingsRepository } from "./repositories/settings";
+export { ArtifactRepository } from "./repositories/artifacts";

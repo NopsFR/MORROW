@@ -2,6 +2,7 @@ import { MorrowError, newId, toErrorShape, type Clock, type Id } from "@morrow/s
 import type { EventActor, EventBus, EventRecorder } from "@morrow/events";
 import {
   JsonValueSchema,
+  type Artifact,
   type ErrorShape,
   type JsonValue,
   type Observation,
@@ -9,7 +10,7 @@ import {
   type ToolExecution,
 } from "@morrow/schemas";
 import type { PermissionGate, PermissionRequests } from "@morrow/permissions";
-import type { ObservationRepository, ToolExecutionRepository } from "@morrow/database";
+import type { ArtifactRepository, ObservationRepository, ToolExecutionRepository } from "@morrow/database";
 import type { AnyTool, CapabilityUse, ToolEnvironment } from "./contract";
 import type { ToolRegistry } from "./registry";
 
@@ -39,6 +40,7 @@ export interface ToolRuntimeDeps {
   readonly registry: ToolRegistry;
   readonly executions: ToolExecutionRepository;
   readonly observations: ObservationRepository;
+  readonly artifacts: ArtifactRepository;
   readonly gate: PermissionGate;
   readonly permissionRequests: PermissionRequests;
   readonly recorder: EventRecorder;
@@ -253,6 +255,28 @@ export class ToolRuntime {
       const run = tool.execute(input, {
         ...env,
         signal: controller.signal,
+        recordArtifact: (artifact) => {
+          const now = this.deps.clock.now();
+          const record: Artifact = {
+            id: newId("artifact", now),
+            projectId: env.projectId,
+            taskId: execution.taskId,
+            ...artifact,
+            createdAt: now,
+          };
+          this.deps.recorder.transact((emit) => {
+            this.deps.artifacts.insert(record);
+            emit({
+              type: "ARTIFACT_CREATED",
+              actor: { kind: "TOOL", id: tool.id },
+              taskId: execution.taskId,
+              projectId: env.projectId,
+              correlationId: execution.id,
+              payload: { artifactId: record.id, kind: record.kind, title: record.title, uri: record.uri },
+            });
+          });
+          return record;
+        },
         emitOutput: (channel, content) =>
           this.deps.recorder.record({
             type: "TOOL_OUTPUT",

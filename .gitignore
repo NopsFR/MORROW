@@ -13,3 +13,5 @@ test-results/
 playwright-report/
 apps/desktop/src-tauri/gen/schemas/
 .vitest-tmp/
+# Assembled bundled runtime (scripts/prepare-runtime.mjs)
+apps/desktop/src-tauri/runtime/

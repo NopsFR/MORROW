@@ -9,6 +9,7 @@
  *   MORROW_DATA_DIR        (required) directory holding the SQLite database
  *   MORROW_MIGRATIONS_DIR  (optional) defaults to database/migrations beside the bundle
  */
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -33,7 +34,10 @@ function readConfig() {
     throw new Error("MORROW_DATA_DIR must be set to an absolute path");
   }
   const here = dirname(fileURLToPath(import.meta.url));
-  const migrationsFolder = process.env.MORROW_MIGRATIONS_DIR ?? resolve(here, "../../database/migrations");
+  // Packaged layout: migrations sit beside the bundle. Development: repo layout.
+  const packaged = resolve(here, "migrations");
+  const migrationsFolder =
+    process.env.MORROW_MIGRATIONS_DIR ?? (existsSync(packaged) ? packaged : resolve(here, "../../database/migrations"));
   return { dataDir, migrationsFolder };
 }
 
@@ -78,11 +82,16 @@ function main(): void {
     track(dispatch(handlers, line).then(send));
   });
   input.on("close", () => {
-    log("stdin closed; finishing in-flight requests");
-    void Promise.allSettled([...inFlight]).then(() => {
-      runtime.close();
-      process.exit(0);
-    });
+    log("stdin closed; halting agent runs and finishing in-flight requests");
+    // Runs may be waiting on the user indefinitely; halt them so shutdown is bounded.
+    // Their tasks are left as-is and paused by startup recovery on the next launch.
+    void runtime.orchestrator
+      .shutdown()
+      .then(() => Promise.allSettled([...inFlight]))
+      .then(() => {
+        runtime.close();
+        process.exit(0);
+      });
   });
 }
 

@@ -9,6 +9,8 @@ import {
   MemoryOriginSchema,
   MemoryStatusSchema,
   MemoryTypeSchema,
+  ModelIdSchema,
+  ModelPurposeSchema,
   ObservationIdSchema,
   ObservationSourceSchema,
   PermissionRequestIdSchema,
@@ -60,8 +62,31 @@ export const EVENT_PAYLOADS = {
   TASK_FAILED: TaskTransitionPayload,
 
   // ── Planning ──────────────────────────────────────────────────────
-  PLAN_CREATED: z.object({ planId: PlanIdSchema, steps: z.array(PlanStepSummary) }),
+  /** The plan's summary and success criteria live here; steps are also persisted in task_steps. */
+  PLAN_CREATED: z.object({
+    planId: PlanIdSchema,
+    summary: z.string(),
+    successCriteria: z.array(z.string()),
+    modelId: ModelIdSchema,
+    steps: z.array(PlanStepSummary),
+  }),
   PLAN_UPDATED: z.object({ planId: PlanIdSchema, reason: z.string(), steps: z.array(PlanStepSummary) }),
+
+  // ── Model calls (operational metadata only — never prompts or model reasoning) ──
+  MODEL_INVOKED: z.object({
+    modelId: ModelIdSchema,
+    providerModelId: z.string(),
+    purpose: ModelPurposeSchema,
+    attempt: z.number().int().positive(),
+  }),
+  MODEL_RESPONDED: z.object({
+    modelId: ModelIdSchema,
+    purpose: ModelPurposeSchema,
+    outcome: z.enum(["VALID", "INVALID_OUTPUT", "FAILED"]),
+    latencyMs: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(),
+  }),
 
   // ── Tools & permissions ───────────────────────────────────────────
   TOOL_REQUESTED: z.object({

@@ -35,7 +35,12 @@ describe("ToolRuntime + filesystem tools", () => {
   it("registers tools with declared permissions and JSON schemas", async () => {
     const rt = testRuntime();
     const tools = await rt.toolRegistry.describe();
-    expect(tools.map((t) => t.id).sort()).toEqual(["filesystem.list_directory", "filesystem.read_text_file"]);
+    expect(tools.map((t) => t.id).sort()).toEqual([
+      "filesystem.find_files",
+      "filesystem.list_directory",
+      "filesystem.read_text_file",
+      "filesystem.write_text_file",
+    ]);
     for (const t of tools) {
       expect(t.permissions.length).toBeGreaterThan(0);
       expect(t.inputJsonSchema).toHaveProperty("type", "object");

@@ -1,4 +1,4 @@
-import { eq, notInArray } from "drizzle-orm";
+import { asc, eq, notInArray } from "drizzle-orm";
 import type { Id } from "@morrow/shared";
 import { ToolExecutionSchema, type ToolDescriptor, type ToolExecution } from "@morrow/schemas";
 import type { MorrowDb } from "../client";
@@ -65,6 +65,16 @@ export class ToolExecutionRepository {
   get(id: Id<"toolExecution">): ToolExecution | null {
     const row = this.db.select().from(toolExecutions).where(eq(toolExecutions.id, id)).get();
     return row ? ToolExecutionSchema.parse(row) : null;
+  }
+
+  listByTask(taskId: Id<"task">): ToolExecution[] {
+    return this.db
+      .select()
+      .from(toolExecutions)
+      .where(eq(toolExecutions.taskId, taskId))
+      .orderBy(asc(toolExecutions.requestedAt))
+      .all()
+      .map((row) => ToolExecutionSchema.parse(row));
   }
 
   /** Executions that were in flight when the runtime last stopped. */

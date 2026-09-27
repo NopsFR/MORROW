@@ -24,6 +24,18 @@ export interface ChatRequest {
   readonly tools?: readonly ModelToolSpec[];
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
+  /**
+   * JSON Schema the response must conform to. Adapters that support constrained
+   * decoding enforce it; callers must still validate the output.
+   */
+  readonly responseSchema?: Readonly<Record<string, unknown>>;
+  /**
+   * Whether the model may spend tokens on internal reasoning before answering.
+   * Internal reasoning is never surfaced by MORROW.
+   */
+  readonly reasoning?: boolean;
+  /** Context window to allocate for this request (tokens). */
+  readonly contextWindow?: number;
 }
 
 export type ChatChunk =

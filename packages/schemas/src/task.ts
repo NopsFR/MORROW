@@ -32,6 +32,23 @@ export const StatusReasonSchema = z.object({
 });
 export type StatusReason = z.infer<typeof StatusReasonSchema>;
 
+/**
+ * What a task produced. `observationIds` are the evidence the answer rests on;
+ * `verification` records whether the objective was independently confirmed.
+ */
+export const TaskResultSchema = z.object({
+  answer: z.string(),
+  observationIds: z.array(idSchema("observation")),
+  verification: z.object({
+    passed: z.boolean(),
+    evidence: z.array(z.string()),
+    reasons: z.array(z.string()),
+  }),
+  /** Model that composed the answer (MORROW model id). */
+  modelId: idSchema("model").nullable(),
+});
+export type TaskResult = z.infer<typeof TaskResultSchema>;
+
 export const TaskSchema = z.object({
   id: TaskIdSchema,
   projectId: ProjectIdSchema.nullable(),
@@ -48,6 +65,8 @@ export const TaskSchema = z.object({
   endedAt: TimestampSchema.nullable(),
   /** Optimistic concurrency version, incremented on every transition. */
   version: z.number().int().nonnegative(),
+  /** Set when the task ends (COMPLETED, or FAILED after producing an answer). */
+  result: TaskResultSchema.nullable(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -64,6 +83,11 @@ export const TaskStepSchema = z.object({
   title: z.string().min(1),
   description: z.string().nullable(),
   status: TaskStepStatusSchema,
+  /** Tools the plan expected this step to use (informational; every call is still gated). */
+  expectedToolIds: z.array(z.string()),
+  /** What the step achieved, or why it failed. */
+  outcome: z.string().nullable(),
+  /** Most recent tool execution made for this step. */
   toolExecutionId: ToolExecutionIdSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

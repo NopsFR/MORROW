@@ -59,6 +59,11 @@ export class TaskStepRepository {
     this.db.insert(taskSteps).values(TaskStepSchema.parse(step)).run();
   }
 
+  get(id: Id<"taskStep">): TaskStep | null {
+    const row = this.db.select().from(taskSteps).where(eq(taskSteps.id, id)).get();
+    return row ? TaskStepSchema.parse(row) : null;
+  }
+
   update(step: TaskStep): void {
     const { id, ...values } = TaskStepSchema.parse(step);
     this.db.update(taskSteps).set(values).where(eq(taskSteps.id, id)).run();

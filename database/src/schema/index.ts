@@ -40,6 +40,7 @@ export const tasks = sqliteTable(
     startedAt: integer("started_at"),
     endedAt: integer("ended_at"),
     version: integer("version").notNull().default(0),
+    result: text("result", { mode: "json" }),
   },
   (t) => [index("tasks_status_idx").on(t.status), index("tasks_project_idx").on(t.projectId)],
 );
@@ -56,6 +57,8 @@ export const taskSteps = sqliteTable(
     title: text("title").notNull(),
     description: text("description"),
     status: text("status").notNull(),
+    expectedToolIds: text("expected_tool_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+    outcome: text("outcome"),
     toolExecutionId: text("tool_execution_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),

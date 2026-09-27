@@ -12,6 +12,8 @@ export const ModelAdapterKindSchema = z.enum(["OLLAMA", "OPENAI_COMPATIBLE", "AN
 export type ModelAdapterKind = z.infer<typeof ModelAdapterKindSchema>;
 
 export const ModelCapabilitiesSchema = z.object({
+  /** Can hold a conversation / generate text (false for embedding-only models). */
+  chat: z.boolean(),
   vision: z.boolean(),
   reasoning: z.boolean(),
   coding: z.boolean(),
@@ -60,6 +62,19 @@ export const ModelSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type Model = z.infer<typeof ModelSchema>;
+
+/**
+ * Why the agent is calling a model. Routing requirements and user model
+ * preferences are expressed per purpose, so e.g. planning and vision work can
+ * use different models without the agent core changing.
+ */
+export const MODEL_PURPOSES = ["PLAN", "DECIDE", "COMPOSE", "VERIFY"] as const;
+export const ModelPurposeSchema = z.enum(MODEL_PURPOSES);
+export type ModelPurpose = z.infer<typeof ModelPurposeSchema>;
+
+/** User's preferred model per purpose (settings key `models.preferences`). */
+export const ModelPreferencesSchema = z.partialRecord(ModelPurposeSchema, ModelIdSchema);
+export type ModelPreferences = z.infer<typeof ModelPreferencesSchema>;
 
 export const ModelUsageSchema = z.object({
   id: idSchema("modelUsage"),

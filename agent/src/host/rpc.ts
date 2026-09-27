@@ -12,7 +12,8 @@ import {
   type RpcResponse,
   type RpcResult,
 } from "@morrow/protocol";
-import type { Project } from "@morrow/schemas";
+import { ModelPreferencesSchema, type Project } from "@morrow/schemas";
+import { MODEL_PREFERENCES_KEY } from "../model/gateway";
 import type { Runtime } from "./container";
 import { runInitChecks } from "./init-checks";
 import type { InterruptionReport } from "../recovery";
@@ -40,7 +41,11 @@ export function createHandlers({ runtime: rt, recovery, background }: HostContex
       protocolVersion: PROTOCOL_VERSION,
       databasePath: rt.database.path,
     }),
-    "system.initialize": async () => ({ checks: await runInitChecks(rt, recovery) }),
+    "system.initialize": async () => {
+      const checks = await runInitChecks(rt, recovery);
+      for (const run of rt.orchestrator.resumeWaiting()) background("resume waiting task", run);
+      return { checks };
+    },
 
     "projects.list": () => rt.repos.projects.listActive(),
     "projects.create": async (params) => {
@@ -74,9 +79,20 @@ export function createHandlers({ runtime: rt, recovery, background }: HostContex
       return task;
     },
     "task.list": (params) => rt.taskService.list({ ...params }),
-    "task.pause": ({ taskId }) => rt.taskService.pause(taskId, USER),
-    "task.resume": ({ taskId }) => rt.taskService.resume(taskId, USER),
-    "task.cancel": ({ taskId, reason }) => rt.taskService.cancel(taskId, USER, reason),
+    "task.detail": ({ taskId }) => ({
+      task: rt.taskService.get(taskId),
+      steps: rt.repos.taskSteps.listByTask(taskId),
+      executions: rt.repos.toolExecutions.listByTask(taskId),
+      observations: rt.repos.observations.listByTask(taskId),
+      artifacts: rt.repos.artifacts.listByTask(taskId),
+    }),
+    "task.pause": ({ taskId }) => rt.orchestrator.pause(taskId, USER),
+    "task.resume": ({ taskId }) => {
+      const { task, completion } = rt.orchestrator.resume(taskId, USER);
+      background(`resume ${taskId}`, completion);
+      return task;
+    },
+    "task.cancel": ({ taskId, reason }) => rt.orchestrator.cancel(taskId, USER, reason),
 
     "events.list": (params) => rt.eventLog.list({ ...params }),
 
@@ -91,7 +107,22 @@ export function createHandlers({ runtime: rt, recovery, background }: HostContex
     "tools.list": () => rt.toolRegistry.describe(),
 
     "models.status": () => rt.modelService.status(),
-    "models.refresh": () => rt.modelService.refresh(),
+    "models.refresh": async () => {
+      const status = await rt.modelService.refresh();
+      // Tasks that were waiting for a model can continue now, if one appeared.
+      for (const run of rt.orchestrator.resumeWaiting()) background("resume waiting task", run);
+      return status;
+    },
+    "models.getPreferences": () => rt.repos.settings.get(MODEL_PREFERENCES_KEY, ModelPreferencesSchema) ?? {},
+    "models.setPreference": ({ purpose, modelId }) => {
+      if (modelId && !rt.modelService.getModel(modelId)) throw new MorrowError("MODEL_NOT_FOUND", "Model not found");
+      const current = rt.repos.settings.get(MODEL_PREFERENCES_KEY, ModelPreferencesSchema) ?? {};
+      const next = { ...current };
+      if (modelId) next[purpose] = modelId;
+      else delete next[purpose];
+      rt.repos.settings.set(MODEL_PREFERENCES_KEY, next, rt.clock.now());
+      return next;
+    },
 
     "memory.list": (params) => rt.memoryService.list({ ...params }),
     "memory.detail": ({ memoryId }) => rt.memoryService.detail(memoryId),
@@ -102,6 +133,8 @@ export function createHandlers({ runtime: rt, recovery, background }: HostContex
         confidence: 1,
         projectId: params.projectId ?? null,
       }),
+    "memory.accept": ({ memoryId }) => rt.memoryService.accept(memoryId, "USER"),
+    "memory.reject": ({ memoryId, reason }) => rt.memoryService.reject(memoryId, reason, "USER"),
     "memory.forget": ({ memoryId, reason }) => rt.memoryService.forget(memoryId, reason, "USER"),
   };
 }

@@ -1,8 +1,8 @@
-import { newId, type Clock } from "@morrow/shared";
-import type { Model, ModelAdapterKind, ModelProvider } from "@morrow/schemas";
+import { MorrowError, newId, type Clock, type Id } from "@morrow/shared";
+import type { Model, ModelAdapterKind, ModelProvider, ModelUsage } from "@morrow/schemas";
 import type { ModelRepository } from "@morrow/database";
 import { OLLAMA_DEFAULT_ENDPOINT } from "./adapters/ollama";
-import type { ModelProviderAdapter, SecretResolver } from "./provider";
+import type { ChatChunk, ChatRequest, ModelProviderAdapter, SecretResolver } from "./provider";
 import { ModelRouter, type ModelRequirements, type RouteResult } from "./router";
 
 export interface ModelStatus {
@@ -119,5 +119,31 @@ export class ModelService {
   route(requirements: ModelRequirements): RouteResult {
     const { providers, models } = this.status();
     return this.router.route(requirements, models, providers);
+  }
+
+  /**
+   * Stream a chat completion from a specific model. Resolves the provider, its
+   * adapter and (if any) its credential at call time. Throws MODEL_UNAVAILABLE if
+   * the model or its provider cannot currently serve requests.
+   */
+  async *chat(modelId: Id<"model">, request: Omit<ChatRequest, "model">, signal?: AbortSignal): AsyncIterable<ChatChunk> {
+    const model = this.repo.listModels().find((m) => m.id === modelId);
+    if (!model || !model.available) throw new MorrowError("MODEL_UNAVAILABLE", `Model ${modelId} is not available`);
+    const provider = this.repo.getProvider(model.providerId);
+    if (!provider || !provider.enabled || provider.state !== "READY") {
+      throw new MorrowError("MODEL_UNAVAILABLE", `Provider for ${model.displayName} is not ready`);
+    }
+    const adapter = this.adapters.get(provider.adapter);
+    if (!adapter) throw new MorrowError("MODEL_UNAVAILABLE", `No adapter for ${provider.adapter}`);
+    const secret = provider.secretRef ? await this.secrets.resolve(provider.secretRef) : null;
+    yield* adapter.chat({ endpoint: provider.endpoint, secret }, { ...request, model: model.providerModelId }, signal);
+  }
+
+  getModel(modelId: Id<"model">): Model | null {
+    return this.repo.listModels().find((m) => m.id === modelId) ?? null;
+  }
+
+  recordUsage(usage: ModelUsage): void {
+    this.repo.recordUsage(usage);
   }
 }

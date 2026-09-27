@@ -49,8 +49,7 @@ In-flight work cannot resume in a new process. Tasks become PAUSED with
 permission requests are cancelled.
 
 ### D11 — Orchestrator stops at WAITING when it cannot proceed
-With no model, tasks wait with `NO_MODEL_AVAILABLE`; with a model but no planner,
-`PLANNER_NOT_IMPLEMENTED`. `UnimplementedPlanner` says so rather than producing a plan.
+With no model, tasks wait with `NO_MODEL_AVAILABLE`. (The interim `PLANNER_NOT_IMPLEMENTED` state was superseded by the model-backed planner — see D21–D29.)
 
 ### D12 — Default Ollama provider row on first run
 A local provider at `127.0.0.1:11434` is registered as a *connection setting* so
@@ -62,7 +61,7 @@ than guessed from model names.
 With no project directory there is no filesystem scope at all. Symlinks are resolved
 before containment checks.
 
-### D14 — Runtime bundle and migrations resolved from the repository in development
+### D14 — Runtime bundle and migrations resolved from the repository in development (superseded in part by D32)
 `launch.rs` resolves them relative to the crate at compile time (overridable by env).
 Shipping them as Tauri resources with a bundled Node (or Node SEA) is deferred; a
 release build without them reports the runtime UNAVAILABLE.
@@ -90,3 +89,65 @@ Avoids downloading a separate browser; Edge is Chromium, like WebView2.
 ### D20 — Repository location
 The session began in a temporary folder whose path exceeded Windows' 260-character
 limit inside `node_modules`; the repo lives in `Documents\MORROW`.
+
+---
+
+## Intelligence loop (second milestone)
+
+### D21 — Structured JSON decisions instead of native tool-calling
+Plans, actions, answers and verdicts are JSON objects validated by Zod, with the schema
+sent for constrained decoding. This works with any chat model the provider serves and
+makes every model decision checkable before it has an effect. Native tool-call chunks
+remain supported by the adapter contract for later use.
+
+### D22 — Flat decision shape
+`{action, toolId, input, note}` instead of a discriminated union: small local models
+follow a flat schema far more reliably under constrained decoding. Semantics are
+validated after parsing.
+
+### D23 — One correction attempt, no repair
+Invalid output is sent back once with the specific problem. A second failure fails the
+task with `INVALID_MODEL_OUTPUT`. MORROW never edits or fills in model output.
+
+### D24 — Internal reasoning disabled for structured calls
+`think: false`. Measured on qwen3:4b: with thinking on, Ollama's constrained output was
+malformed (`{"answer": "}"}`); with it off, output was correct. Reasoning is never surfaced.
+
+### D25 — Plan metadata lives in PLAN_CREATED
+Summary, success criteria and planning model are recorded in the event; steps in
+`task_steps`. A resumed run reconstructs the plan from these — no extra table.
+
+### D26 — Verification requires evidence, not model agreement
+The model judges each criterion, but a "met" verdict counts only if it cites observations
+that exist, and must cite at least one when tools produced observations. Structural
+checks (all steps completed, answer cites real observations) are deterministic.
+A task that fails verification is FAILED with its answer kept and marked unverified.
+
+### D27 — Success criteria describe substance, not presentation
+After a live run where the planner invented "the value is returned as a string" and
+verification (correctly) failed on it, the planning prompt limits criteria to what the
+user asked for and the verifier judges substance. Criteria are capped at 4.
+
+### D28 — Task outcomes are PROPOSED memories
+Completion proposes an EPISODIC memory citing the evidence; nothing becomes an active
+memory without the user's acceptance (`memory.accept` / `memory.reject`).
+
+### D29 — Model availability failures wait, output failures fail
+No model / provider unreachable during planning or execution → WAITING (resumable once a
+model appears). Invalid output, verification failure, cannot-proceed → FAILED.
+
+### D30 — `chat` capability; embedding-only models are never routed to
+Ollama reports `completion` for chat models. When a server reports no capabilities at
+all (older versions), a listed model is assumed to be chat-capable — the only assumption
+the adapter makes, and it is documented here.
+
+### D31 — Per-purpose model preferences in settings
+`models.preferences` maps PLAN/DECIDE/COMPOSE/VERIFY to a model id. This is how
+"Ollama → local coding model / vision model, remote → reasoning model" is expressed
+without changing the agent core; the router still enforces requirements.
+
+### D32 — Bundled Node: copy the exact Node that installed the native addon
+`prepare-runtime.mjs` copies `process.execPath` and the better-sqlite3 build installed
+for it, so the ABI matches by construction, and verifies by running the assembled copy
+outside the repo. Choosing and pinning a Node release for official builds (and code
+signing) is left to the release process.

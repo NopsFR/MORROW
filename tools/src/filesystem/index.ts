@@ -25,6 +25,7 @@ export const readTextFileTool: Tool<typeof ReadInput, typeof ReadOutput> = {
   version: "1.0.0",
   category: "FILESYSTEM",
   riskLevel: "LOW",
+  requiresWorkspace: true,
   inputSchema: ReadInput,
   outputSchema: ReadOutput,
   permissions: [{ capability: "fs.read", riskLevel: "LOW", rationale: "Reads file contents from the workspace" }],
@@ -77,6 +78,7 @@ export const listDirectoryTool: Tool<typeof ListInput, typeof ListOutput> = {
   version: "1.0.0",
   category: "FILESYSTEM",
   riskLevel: "LOW",
+  requiresWorkspace: true,
   inputSchema: ListInput,
   outputSchema: ListOutput,
   permissions: [{ capability: "fs.list", riskLevel: "LOW", rationale: "Reveals file names in the workspace" }],
@@ -102,4 +104,10 @@ export const listDirectoryTool: Tool<typeof ListInput, typeof ListOutput> = {
   },
 };
 
-export const filesystemTools = [readTextFileTool, listDirectoryTool] as const;
+export { writeTextFileTool } from "./write";
+export { findFilesTool, matcherFor } from "./find";
+
+import { writeTextFileTool } from "./write";
+import { findFilesTool } from "./find";
+
+export const filesystemTools = [readTextFileTool, listDirectoryTool, findFilesTool, writeTextFileTool] as const;

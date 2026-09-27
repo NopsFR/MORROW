@@ -2,6 +2,8 @@ import { join } from "node:path";
 import { systemClock, type Clock, type Id } from "@morrow/shared";
 import { EventBus, EventRecorder } from "@morrow/events";
 import {
+  ArtifactRepository,
+  TaskStepRepository,
   MemoryRepository,
   ModelRepository,
   ObservationRepository,
@@ -22,9 +24,12 @@ import { ModelService, OllamaAdapter, noSecrets, type ModelProviderAdapter } fro
 import { MemoryService } from "@morrow/memory";
 import type { ModelAdapterKind } from "@morrow/schemas";
 import { TaskService } from "../core/task-service";
-import { Orchestrator } from "../core/orchestrator";
-import { UnimplementedPlanner } from "../planner";
-import { StepExecutor } from "../executor";
+import { Orchestrator, type AgentLimits } from "../core/orchestrator";
+import { ModelPlanner } from "../planner";
+import { ActionDecider, StepExecutor } from "../executor";
+import { ResultJudge } from "../verifier";
+import { ContextBuilder } from "../context";
+import { ModelGateway, type GatewayOptions } from "../model/gateway";
 
 export const DATABASE_FILENAME = "morrow.sqlite";
 
@@ -34,6 +39,9 @@ export interface RuntimeConfig {
   readonly clock?: Clock;
   readonly fetch?: typeof fetch;
   readonly onSubscriberError?: (error: unknown) => void;
+  readonly gateway?: GatewayOptions;
+  readonly limits?: AgentLimits;
+  readonly log?: (message: string) => void;
 }
 
 /**
@@ -59,6 +67,8 @@ export function createRuntime(config: RuntimeConfig) {
   const repos = {
     projects: new ProjectRepository(db),
     tasks: new TaskRepository(db),
+    taskSteps: new TaskStepRepository(db),
+    artifacts: new ArtifactRepository(db),
     observations: new ObservationRepository(db),
     memory: new MemoryRepository(db),
     toolCatalog: new ToolCatalogRepository(db),
@@ -86,6 +96,7 @@ export function createRuntime(config: RuntimeConfig) {
     registry: toolRegistry,
     executions: repos.toolExecutions,
     observations: repos.observations,
+    artifacts: repos.artifacts,
     gate: permissionGate,
     permissionRequests,
     recorder,
@@ -98,8 +109,28 @@ export function createRuntime(config: RuntimeConfig) {
   const modelService = new ModelService(repos.models, adapters, noSecrets, clock);
   const taskService = new TaskService(repos.tasks, recorder, clock);
   const memoryService = new MemoryService(repos.memory, recorder, clock);
-  const orchestrator = new Orchestrator(taskService, modelService, toolRegistry, new UnimplementedPlanner());
   const stepExecutor = new StepExecutor(taskService, toolRuntime);
+  const gateway = new ModelGateway(modelService, recorder, repos.settings, clock, config.gateway);
+  const contextBuilder = new ContextBuilder(repos.projects, toolRegistry, memoryService, clock);
+  const orchestrator = new Orchestrator({
+    tasks: taskService,
+    steps: repos.taskSteps,
+    executions: repos.toolExecutions,
+    observations: repos.observations,
+    eventLog,
+    recorder,
+    context: contextBuilder,
+    gateway,
+    planner: new ModelPlanner(gateway),
+    decider: new ActionDecider(gateway),
+    judge: new ResultJudge(gateway),
+    stepExecutor,
+    memory: memoryService,
+    permissionRequests,
+    clock,
+    ...(config.limits ? { limits: config.limits } : {}),
+    ...(config.log ? { log: config.log } : {}),
+  });
 
   return {
     clock,
@@ -116,6 +147,7 @@ export function createRuntime(config: RuntimeConfig) {
     modelService,
     taskService,
     memoryService,
+    gateway,
     orchestrator,
     stepExecutor,
     close: () => database.close(),

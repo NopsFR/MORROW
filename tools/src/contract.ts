@@ -1,6 +1,8 @@
 import type { z } from "zod";
 import type { Id } from "@morrow/shared";
 import type {
+  Artifact,
+  ArtifactKind,
   Capability,
   RiskLevel,
   ToolAvailability,
@@ -27,10 +29,21 @@ export interface ToolEnvironment {
   readonly workspaceRoots: readonly string[];
 }
 
+export interface ArtifactInput {
+  readonly kind: ArtifactKind;
+  readonly title: string;
+  readonly uri: string;
+  readonly mimeType: string | null;
+  readonly contentHash: string | null;
+  readonly sizeBytes: number | null;
+}
+
 export interface ToolExecutionContext extends ToolEnvironment {
   readonly signal: AbortSignal;
   /** Stream intermediate output. Becomes TOOL_OUTPUT events. */
   emitOutput(channel: "stdout" | "stderr" | "progress" | "data", content: string): void;
+  /** Register something the tool produced. Persisted and announced as ARTIFACT_CREATED. */
+  recordArtifact(artifact: ArtifactInput): Artifact;
 }
 
 /**
@@ -53,6 +66,8 @@ export interface Tool<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.Z
   readonly outputSchema: O;
   /** Declared permission requirements (capability + risk + rationale). */
   readonly permissions: readonly Omit<ToolPermission, "toolId">[];
+  /** The tool only works inside a project workspace directory. */
+  readonly requiresWorkspace?: boolean;
 
   /** Whether the tool can run on this machine right now. Must not have side effects. */
   availability(): Promise<ToolAvailability>;

@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  ArtifactSchema,
+  ModelIdSchema,
+  ModelPreferencesSchema,
+  ModelPurposeSchema,
+  ObservationSchema,
+  TaskStepSchema,
+  ToolExecutionSchema,
   InitCheckSchema,
   MemoryIdSchema,
   MemoryRelationSchema,
@@ -61,6 +68,16 @@ export const RPC_METHODS = {
     z.object({ statuses: z.array(TaskStatusSchema).optional(), limit: z.number().int().min(1).max(500).optional() }),
     z.array(TaskSchema),
   ),
+  "task.detail": method(
+    z.object({ taskId: TaskIdSchema }),
+    z.object({
+      task: TaskSchema,
+      steps: z.array(TaskStepSchema),
+      executions: z.array(ToolExecutionSchema),
+      observations: z.array(ObservationSchema),
+      artifacts: z.array(ArtifactSchema),
+    }),
+  ),
   "task.pause": method(z.object({ taskId: TaskIdSchema }), TaskSchema),
   "task.resume": method(z.object({ taskId: TaskIdSchema }), TaskSchema),
   "task.cancel": method(z.object({ taskId: TaskIdSchema, reason: z.string().max(500).optional() }), TaskSchema),
@@ -90,6 +107,11 @@ export const RPC_METHODS = {
 
   "models.status": method(Empty, z.object({ providers: z.array(ModelProviderSchema), models: z.array(ModelSchema) })),
   "models.refresh": method(Empty, z.object({ providers: z.array(ModelProviderSchema), models: z.array(ModelSchema) })),
+  "models.getPreferences": method(Empty, ModelPreferencesSchema),
+  "models.setPreference": method(
+    z.object({ purpose: ModelPurposeSchema, modelId: ModelIdSchema.nullable() }),
+    ModelPreferencesSchema,
+  ),
 
   "memory.list": method(
     z.object({
@@ -118,6 +140,8 @@ export const RPC_METHODS = {
     }),
     MemorySchema,
   ),
+  "memory.accept": method(z.object({ memoryId: MemoryIdSchema }), MemorySchema),
+  "memory.reject": method(z.object({ memoryId: MemoryIdSchema, reason: z.string().min(1).max(500) }), MemorySchema),
   "memory.forget": method(z.object({ memoryId: MemoryIdSchema, reason: z.string().min(1).max(500) }), MemorySchema),
 } as const;
 

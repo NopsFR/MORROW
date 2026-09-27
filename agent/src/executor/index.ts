@@ -52,6 +52,7 @@ export class StepExecutor {
           });
         },
         onPermissionResolved: (_execution, granted) => {
+          if (signal?.aborted) return;
           if (granted) this.tasks.transition({ taskId, to: "EXECUTING", actor: AGENT });
           else deniedWhileWaiting = true;
         },
@@ -59,7 +60,10 @@ export class StepExecutor {
     );
 
     const current = this.tasks.get(taskId);
-    if (current.status === "CANCELLED" || current.status === "PAUSED") return { outcome, task: current };
+    // Halted (pause, cancel, shutdown): whoever halted the run owns the task's state now.
+    if (signal?.aborted || current.status === "CANCELLED" || current.status === "PAUSED") {
+      return { outcome, task: current };
+    }
 
     if (deniedWhileWaiting || outcome.execution.status === "DENIED") {
       const next = this.tasks.transition({
@@ -75,3 +79,5 @@ export class StepExecutor {
     return { outcome, task: next };
   }
 }
+
+export * from "./decider";

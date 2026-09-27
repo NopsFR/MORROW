@@ -5,5 +5,8 @@ export * from "./planner";
 export * from "./verifier";
 export * from "./recovery";
 export * from "./executor";
+export * from "./context";
+export * from "./prompts";
+export * from "./model/gateway";
 export { createRuntime, type Runtime, type RuntimeConfig } from "./host/container";
 export { createHandlers, dispatch, RUNTIME_VERSION } from "./host/rpc";

@@ -6,6 +6,8 @@ export interface ModelRequirements {
   readonly capabilities?: Partial<Record<keyof ModelCapabilities, true>>;
   readonly locality?: ModelLocality | "ANY";
   readonly minContextWindow?: number;
+  /** Capabilities that make a model rank higher without being required. */
+  readonly preferCapabilities?: readonly (keyof ModelCapabilities)[];
   /** Models to try first, in order (e.g. a user preference for a purpose). */
   readonly preferred?: readonly Id<"model">[];
 }
@@ -18,8 +20,9 @@ export type RouteResult =
  * Chooses which model serves a request. Deterministic and side-effect free:
  * it ranks what the providers have actually reported, it never invents a model.
  *
- * Ranking: explicit preference → local before remote (local-first) → larger context.
- * Every other eligible model becomes a fallback, in rank order.
+ * Ranking: explicit preference → local before remote (local-first) → more preferred
+ * capabilities → larger context. Every other eligible model becomes a fallback, in
+ * rank order.
  */
 export class ModelRouter {
   route(requirements: ModelRequirements, models: readonly Model[], providers: readonly ModelProvider[]): RouteResult {
@@ -43,9 +46,11 @@ export class ModelRouter {
     }
 
     const preference = requirements.preferred ?? [];
-    const rank = (m: Model): [number, number, number] => {
+    const preferredCaps = requirements.preferCapabilities ?? [];
+    const rank = (m: Model): [number, number, number, number] => {
       const p = preference.indexOf(m.id);
-      return [p === -1 ? Number.MAX_SAFE_INTEGER : p, m.locality === "LOCAL" ? 0 : 1, -(m.contextWindow ?? 0)];
+      const missing = preferredCaps.filter((c) => !m.capabilities[c]).length;
+      return [p === -1 ? Number.MAX_SAFE_INTEGER : p, m.locality === "LOCAL" ? 0 : 1, missing, -(m.contextWindow ?? 0)];
     };
     const sorted = [...eligible].sort((a, b) => {
       const ra = rank(a);

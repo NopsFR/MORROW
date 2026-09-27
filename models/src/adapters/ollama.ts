@@ -111,6 +111,10 @@ export class OllamaAdapter implements ModelProviderAdapter {
       displayName: name,
       contextWindow,
       capabilities: {
+        // Servers that report capabilities say "completion" for chat models; embedding-only
+        // models omit it. Older servers report nothing, in which case a listed model is
+        // assumed to be a chat model (documented in docs/decisions.md).
+        chat: caps.length === 0 ? true : caps.includes("completion"),
         vision: caps.includes("vision"),
         reasoning: caps.includes("thinking"),
         // Ollama does not report coding specialisation; never guess it.
@@ -138,9 +142,12 @@ export class OllamaAdapter implements ModelProviderAdapter {
         ...(request.tools
           ? { tools: request.tools.map((t) => ({ type: "function", function: t })) }
           : {}),
+        ...(request.responseSchema ? { format: request.responseSchema } : {}),
+        ...(request.reasoning !== undefined ? { think: request.reasoning } : {}),
         options: {
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           ...(request.maxOutputTokens !== undefined ? { num_predict: request.maxOutputTokens } : {}),
+          ...(request.contextWindow !== undefined ? { num_ctx: request.contextWindow } : {}),
         },
       }),
     });

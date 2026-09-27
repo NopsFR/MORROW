@@ -82,6 +82,64 @@ the database) and force-kills after a grace period.
 Internal packages export TypeScript source (`exports: ./src/index.ts`); Vite, esbuild
 and Vitest compile them directly, so there is no per-package build step.
 
+## Agent loop (model-backed)
+
+`agent/src/core/orchestrator.ts`. One task, one run, driven by persisted state:
+
+```
+USER INTENT ─ task.create ─▶ TASK (IDLE)
+  PLANNING     ContextBuilder: objective, project, usable tools, active memories, platform/time
+               ModelGateway(PLAN) → ModelPlanner → {summary, steps[], successCriteria[]}
+               steps → task_steps; summary/criteria/model → PLAN_CREATED
+  EXECUTING    per step: ModelGateway(DECIDE) → ActionDecider →
+                 call_tool      → StepExecutor → ToolRuntime → permission gate → tool → observation
+                 complete_step  → step COMPLETED (outcome recorded)
+                 cannot_proceed → step FAILED → task FAILED (CANNOT_PROCEED)
+  OBSERVING    → EXECUTING (the decider sees every result, success or failure)
+  RECOVERING   after a denial/failure: decideRecovery → back to EXECUTING, or FAILED
+  VERIFYING    ModelGateway(COMPOSE) → ResultJudge.compose → {answer, observationIds}
+               ModelGateway(VERIFY)  → ResultJudge.judge   → verdict per criterion
+               Verifier + taskCriteria: every step completed; cited observations exist;
+               a "met" verdict must cite real evidence when tools produced any
+  RESULT       COMPLETED with TaskResult (answer, evidence, verification), or
+               FAILED (VERIFICATION_FAILED) with the unverified answer kept for the user
+  MEMORY       on completion: an EPISODIC memory is PROPOSED with the evidence; the user accepts or rejects it
+```
+
+- **Durable.** Each iteration reads the task's status and advances one phase. The
+  plan (task_steps + PLAN_CREATED), tool executions and observations are all
+  persisted, so a halted run — pause, cancel, runtime shutdown — continues later from
+  the database. A resumed task never re-plans.
+- **Halting.** `pause`, `cancel` and `shutdown` abort the run's signal. That cancels
+  in-flight model calls and pending permission questions. Shutdown leaves task state
+  untouched, and startup recovery pauses the task.
+- **Budgets.** At most 6 tool calls per step and 24 per task (`ACTION_BUDGET_EXHAUSTED`).
+- **Repeated denial.** If the model re-requests a call the user already denied, the task
+  fails with `PERMISSION_DENIED` instead of asking again.
+- **Model unavailable.** No model, or a provider that stops responding during planning
+  or execution, moves the task to `WAITING` (`NO_MODEL_AVAILABLE` / `MODEL_UNAVAILABLE`).
+  `models.refresh` and startup resume those tasks once a model is available.
+
+### Model gateway
+
+`agent/src/model/gateway.ts` is the agent's only route to models.
+
+- **Routing: provider first, model second.** Each purpose (`PLAN`, `DECIDE`, `COMPOSE`,
+  `VERIFY`) has requirements: `chat` is required, and `toolCalling`/`reasoning` are preferred.
+  The user's per-purpose preference comes from settings (`models.setPreference`). The
+  router chooses among what providers actually reported. The agent core never names a
+  model or a provider.
+- **Structured output.** The output's Zod schema is sent as a JSON Schema for constrained
+  decoding (Ollama `format`), and the reply is validated with Zod plus semantic checks
+  (for example, tool ids must exist). Invalid output gets exactly one correction attempt
+  that states the problem. It is never repaired or invented.
+- **Fallback.** On a transport failure the gateway tries the next eligible model.
+- **Accounting.** Each call writes a `model_usage` row and emits `MODEL_INVOKED` /
+  `MODEL_RESPONDED`. These events carry metadata only; prompts and model reasoning
+  are not stored.
+- **Internal reasoning** is disabled for structured calls (`think: false`) and never
+  surfaced. Ollama rejected constrained output from qwen3 when thinking was on.
+
 ## Core flow
 
 ```
@@ -118,7 +176,7 @@ log), `schemaVersion`, `occurredAt`, `actor {kind: USER|AGENT|SYSTEM|TOOL, id}`,
 
 Types: `TASK_CREATED, TASK_STARTED, TASK_STATE_CHANGED, TASK_PAUSED, TASK_RESUMED,
 TASK_CANCELLED, TASK_COMPLETED, TASK_FAILED, PLAN_CREATED, PLAN_UPDATED,
-TOOL_REQUESTED, TOOL_PERMISSION_REQUIRED, PERMISSION_RESOLVED, TOOL_STARTED,
+MODEL_INVOKED, MODEL_RESPONDED, TOOL_REQUESTED, TOOL_PERMISSION_REQUIRED, PERMISSION_RESOLVED, TOOL_STARTED,
 TOOL_OUTPUT, TOOL_COMPLETED, TOOL_FAILED, OBSERVATION_CREATED, VERIFICATION_STARTED,
 VERIFICATION_PASSED, VERIFICATION_FAILED, MEMORY_PROPOSED, MEMORY_CREATED,
 MEMORY_UPDATED, ARTIFACT_CREATED`.
@@ -152,9 +210,7 @@ written with optimistic concurrency (`version` column), and recorded as exactly 
 lifecycle event in the same transaction. Every status can carry a `statusReason
 {code, message}` — for example `WAITING / NO_MODEL_AVAILABLE`.
 
-**Orchestrator (current reach).** `IDLE → PLANNING → route a model →` `WAITING
-(NO_MODEL_AVAILABLE)` if none, or `WAITING (PLANNER_NOT_IMPLEMENTED)` if a model
-exists. Nothing is fabricated past the point the system can really reach.
+The orchestrator drives the full lifecycle; see [Agent loop](#agent-loop-model-backed).
 
 **Startup recovery.** Work interrupted by a crash or quit cannot continue in-process:
 unfinished tool executions become `FAILED / RUNTIME_INTERRUPTED`, their pending
@@ -179,9 +235,19 @@ interface Tool<I, O> {
 something a tool *can* do. A permission grant is the user's decision that a use is
 *allowed*. Registering a tool never grants anything.
 
-Implemented tools: `filesystem.read_text_file`, `filesystem.list_directory`. Both
-confine paths to the project's workspace directory after resolving symlinks, and
-both require permission (LOW risk).
+Implemented tools. All are confined to the project's workspace directory after
+resolving symlinks, all require permission, and none are offered to the model for
+tasks without a workspace:
+
+| Tool | Capability | Risk |
+|---|---|---|
+| `filesystem.read_text_file` | fs.read | LOW |
+| `filesystem.list_directory` | fs.list | LOW |
+| `filesystem.find_files` (name or glob search; skips .git, node_modules, build output) | fs.list | LOW |
+| `filesystem.write_text_file` (create, or overwrite when explicitly requested) | fs.write | MEDIUM to create, HIGH to overwrite |
+
+Tools can register what they produce through `ctx.recordArtifact`. The write tool does
+this, and the artifact is persisted with a sha256 hash and announced as `ARTIFACT_CREATED`.
 
 ## Permission model
 
@@ -263,16 +329,38 @@ Retrieval is lexical (substring) for now. Semantic retrieval is not yet implemen
 - Secrets are never stored in the database (only `secretRef`s).
 - There is no unrestricted mode.
 
+## Bundled runtime
+
+The packaged application ships its own Node.js, so users install nothing else.
+`scripts/prepare-runtime.mjs` assembles `apps/desktop/src-tauri/runtime/`, containing:
+
+- the Node binary,
+- the runtime bundle and migrations,
+- the only unbundleable dependencies: better-sqlite3's native addon, `bindings` and `file-uri-to-path`,
+- a manifest recording the Node version and ABI.
+
+`--verify` runs the assembled runtime from a copy outside the repository using its own Node.
+
+`tauri.bundle.conf.json` adds that directory as app resources, and `pnpm package`
+builds with it. At startup `launch.rs` resolves each item in this order:
+
+1. an explicit env override;
+2. the bundled runtime in the app's resources, if complete;
+3. the repository layout, for development.
+
+Development therefore keeps using `node` from PATH and `agent/dist`.
+
 ## Not yet implemented (architecture reserved)
 
-- A model-backed planner.
-- The verification loop wired into the orchestrator. The `Verifier` exists but no criteria are produced yet.
-- Retry and replan loops. `decideRecovery` exists; the loop driving it does not.
+- Plan revision mid-task (`PLAN_UPDATED`). Recovery currently continues the same plan.
 - Terminal, browser, git, development and cybersecurity tools.
 - Computer vision and computer control (reported UNAVAILABLE).
 - MCP runtime and connectors: schemas and tables only.
 - Remote model providers and the OS keychain `SecretResolver`.
 - Artifact, research and settings repositories: tables only, except settings.
 - GPU detection.
-- Production packaging of the Node runtime and migrations as installer resources.
+- A built and tested installer. The bundled runtime is assembled and verified, but
+  `pnpm package` (the NSIS/MSI build) has not been run, and code signing is not set up.
+- A UI view of plans, steps and observations. The protocol exposes them (`task.detail`);
+  the workspace currently shows the status, result and verification only.
 - Semantic memory retrieval.

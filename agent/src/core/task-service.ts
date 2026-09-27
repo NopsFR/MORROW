@@ -1,6 +1,6 @@
 import { MorrowError, newId, type Clock, type Id } from "@morrow/shared";
 import type { EventActor, EventRecorder, MorrowEvent } from "@morrow/events";
-import type { StatusReason, Task, TaskStatus } from "@morrow/schemas";
+import type { StatusReason, Task, TaskResult, TaskStatus } from "@morrow/schemas";
 import type { TaskListQuery, TaskRepository } from "@morrow/database";
 import { canTransition, eventForTransition, isTerminal } from "./state-machine";
 
@@ -16,6 +16,8 @@ export interface TransitionInput {
   readonly reason?: StatusReason | null;
   readonly actor: EventActor;
   readonly causationId?: Id<"event"> | null;
+  /** Only accepted when moving to COMPLETED or FAILED. */
+  readonly result?: TaskResult;
 }
 
 const MAX_TITLE = 120;
@@ -59,6 +61,7 @@ export class TaskService {
       startedAt: null,
       endedAt: null,
       version: 0,
+      result: null,
     };
     this.recorder.transact((emit) => {
       this.tasks.insert(task);
@@ -95,6 +98,9 @@ export class TaskService {
       if (!canTransition(from, to)) {
         throw new MorrowError("INVALID_TRANSITION", `Cannot move task from ${from} to ${to}`, { from, to });
       }
+      if (input.result && to !== "COMPLETED" && to !== "FAILED") {
+        throw new MorrowError("INVALID_RESULT", "A result can only be recorded when a task completes or fails");
+      }
       if (from === "PAUSED" && to !== "CANCELLED" && current.pausedFrom !== to) {
         throw new MorrowError("INVALID_RESUME", `Paused task must resume to ${current.pausedFrom}`, {
           pausedFrom: current.pausedFrom,
@@ -112,6 +118,7 @@ export class TaskService {
         startedAt: current.startedAt ?? (from === "IDLE" && to === "PLANNING" ? now : null),
         endedAt: isTerminal(to) ? now : null,
         version: current.version + 1,
+        result: input.result ?? current.result,
       };
       if (!this.tasks.updateIfVersion(next, current.version)) {
         throw new MorrowError("TASK_CONFLICT", "Task was modified concurrently; retry with fresh state");

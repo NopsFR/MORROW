@@ -27,6 +27,19 @@ function TaskRow({ task }: { task: Task }) {
         <span className="task__title">{task.title}</span>
         <Mono className="task__time">{relativeTime(task.updatedAt)}</Mono>
       </div>
+      {task.result ? (
+        <div className="task__result">
+          <p className="task__answer">{task.result.answer}</p>
+          <StateMark
+            tone={task.result.verification.passed ? "success" : "warning"}
+            label={
+              task.result.verification.passed
+                ? `Verified · ${task.result.observationIds.length} observation${task.result.observationIds.length === 1 ? "" : "s"}`
+                : "Not verified"
+            }
+          />
+        </div>
+      ) : null}
       {task.statusReason ? (
         <div className="task__reason">
           <Mono>{task.statusReason.code}</Mono>

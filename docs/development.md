@@ -43,6 +43,41 @@ pnpm check              # typecheck + test + test:rust
 
 Unit tests use real SQLite files in temp directories, never in-memory databases.
 
+## Running the agent against a real model
+
+MORROW uses whatever Ollama has installed, and the router picks a compatible model.
+For development we used `qwen3:4b`:
+
+```bash
+ollama pull qwen3:4b
+```
+
+Two live checks exercise the real path end to end:
+
+```bash
+# Through the runtime process, over the same protocol the desktop app uses.
+# The script plays the user and answers permission prompts (allow once, or --deny).
+pnpm live:agent --workspace <dir> --objective "What version is this project?"
+
+# Through the desktop UI itself: start the app with WebView2 remote debugging, then drive it.
+# PowerShell: $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"; pnpm dev
+node scripts/desktop-live-check.mjs --workspace <dir> --objective "<task>" [--cancel-open] [--screenshot out.png]
+```
+
+Unit tests never call a real model. `tests/unit/scripted-ollama.ts` is a test double
+that speaks the Ollama HTTP protocol from a script, so every branch of the loop is
+deterministic.
+
+## Packaging (bundled runtime)
+
+```bash
+pnpm prepare:runtime    # assemble + verify apps/desktop/src-tauri/runtime (Node, bundle, migrations, sqlite addon)
+pnpm package            # prepare:runtime + tauri build with the runtime as app resources
+```
+
+`pnpm dev` is unaffected: without a bundled runtime in the app's resources, the
+launcher uses `node` from PATH and `agent/dist`.
+
 ## Database changes
 
 1. Edit `database/src/schema/index.ts`.

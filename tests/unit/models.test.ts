@@ -5,7 +5,7 @@ import { ModelRouter, OllamaAdapter } from "@morrow/models";
 import { testRuntime } from "./helpers";
 
 const now = 1_800_000_000_000;
-const caps = { vision: false, reasoning: false, coding: false, toolCalling: true, streaming: true };
+const caps = { chat: true, vision: false, reasoning: false, coding: false, toolCalling: true, streaming: true };
 
 function provider(state: ModelProvider["state"], locality: "LOCAL" | "REMOTE" = "LOCAL"): ModelProvider {
   return {
@@ -64,6 +64,19 @@ describe("ModelRouter", () => {
 
     const vision = router.route({ capabilities: { vision: true } }, models, [local, remote]);
     expect(vision).toMatchObject({ ok: false, reason: "NO_MODEL_MATCHES" });
+  });
+
+  it("ranks by preferred capabilities without requiring them, and honours explicit preference", () => {
+    const local = provider("READY");
+    const plain = model(local, "plain", { capabilities: { ...caps, toolCalling: false }, contextWindow: 64_000 });
+    const tooled = model(local, "tooled", { contextWindow: 8_000 });
+    const embed = model(local, "embed", { capabilities: { ...caps, chat: false } });
+    const r = router.route({ capabilities: { chat: true }, preferCapabilities: ["toolCalling"] }, [plain, tooled, embed], [local]);
+    if (!r.ok) throw new Error("expected a route");
+    expect(r.primary.displayName).toBe("tooled");
+    expect(r.fallbacks.map((m) => m.displayName)).toEqual(["plain"]); // embedding model excluded
+    const pinned = router.route({ capabilities: { chat: true }, preferred: [plain.id] }, [plain, tooled], [local]);
+    expect(pinned.ok && pinned.primary.displayName).toBe("plain");
   });
 });
 
