@@ -106,6 +106,21 @@ describe("task view — rendered from real persisted state", () => {
     for (const label of ["Allow once", "Allow for this task", "Allow for this project", "Deny", "Deny for this task"]) {
       expect(t).toContain(label);
     }
+    // Why: the agent's stated purpose (persisted with the call) and its plan step.
+    expect(t).toContain("Why MORROW wants this Read the notes (step 1 of 2: Read notes.txt)");
+    // Why the user is asked, and what each choice would cover.
+    expect(t).toContain("Low-risk operations need your approval unless a permission you granted covers them");
+    expect(t).toContain("only this operation; MORROW asks again next time");
+    expect(t).toContain("fs.read for the rest of this task, at up to HIGH risk");
+    expect(t).toContain("fs.read for any task in project “Orbit”");
+    expect(t).toContain("refuse fs.read for the rest of this task");
+  });
+
+  it("shows the stated purpose of each tool call in the activity timeline", async () => {
+    const { final, workspace } = await readTask();
+    expect(text(final)).toContain("Tool requested · filesystem.read_text_file Read the notes · path: notes.txt");
+    expect(text(final)).toContain("Purpose Read the notes");
+    expect(workspace.getState().detail!.executions[0]!.purpose).toBe("Read the notes");
   });
 
   it("offers only scopes the permission engine would accept for the risk", () => {
@@ -166,6 +181,20 @@ describe("task view — rendered from real persisted state", () => {
     expect(v.checks.every((c) => c.passed)).toBe(true);
     expect(v.citedObservationIds).toHaveLength(1);
     expect(t).toContain(v.citedObservationIds[0]);
+  });
+
+  it("says the result is being composed while VERIFYING before checks begin", async () => {
+    const { workspace } = await readTask();
+    const { detail, events } = workspace.getState();
+    // The same persisted task, as it stood before verification events existed.
+    const composing = { ...detail!, task: { ...detail!.task, status: "VERIFYING" as const, result: null } };
+    const before = events.filter((e) => e.sequence < events.find((x) => x.type === "VERIFICATION_STARTED")!.sequence);
+    expect(verification(composing, before).status).toBe("COMPOSING");
+    expect(verification(composing, events).status).toBe("RUNNING");
+    const t = text(renderToStaticMarkup(<TaskView detail={composing} events={before} now={Date.now()} actions={actions} />));
+    expect(t).toContain("Composing result");
+    expect(t).toContain("Composing the result");
+    expect(t).not.toContain("Not yet verified");
   });
 
   it("keeps the result separate and marks it verified", async () => {

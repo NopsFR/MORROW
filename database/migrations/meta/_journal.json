@@ -15,6 +15,13 @@
       "when": 1790487568274,
       "tag": "0001_task_results_and_step_outcomes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790494650409,
+      "tag": "0002_tool_call_purpose",
+      "breakpoints": true
     }
   ]
 }

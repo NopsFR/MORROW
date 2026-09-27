@@ -22,6 +22,8 @@ export interface ToolCallRequest {
   readonly stepId?: Id<"taskStep"> | null;
   /** Who asked for this call (normally the agent). */
   readonly requestedBy: EventActor;
+  /** What the caller says the call is for; shown to the user when permission is asked. */
+  readonly purpose?: string | null;
   readonly signal?: AbortSignal;
 }
 
@@ -124,6 +126,7 @@ export class ToolRuntime {
       taskId: request.taskId,
       stepId: request.stepId ?? null,
       status: "REQUESTED",
+      purpose: request.purpose?.trim() || null,
       input: safeInput.success ? safeInput.data : null,
       output: null,
       error: null,
@@ -139,7 +142,13 @@ export class ToolRuntime {
         taskId: request.taskId,
         projectId: request.projectId,
         correlationId: execution.id,
-        payload: { executionId: execution.id, toolId: tool.id, toolVersion: tool.version, input: execution.input },
+        payload: {
+          executionId: execution.id,
+          toolId: tool.id,
+          toolVersion: tool.version,
+          input: execution.input,
+          purpose: execution.purpose,
+        },
       });
     });
     return execution;

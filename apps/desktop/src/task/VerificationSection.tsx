@@ -5,6 +5,7 @@ import { verification } from "./model";
 
 const STATUS: Record<string, { tone: Tone; label: string }> = {
   NOT_STARTED: { tone: "neutral", label: "Not started" },
+  COMPOSING: { tone: "accent", label: "Composing result" },
   RUNNING: { tone: "accent", label: "Verifying" },
   PASSED: { tone: "success", label: "Passed" },
   FAILED: { tone: "error", label: "Failed" },
@@ -19,9 +20,17 @@ export function VerificationSection({ detail, events }: { detail: TaskDetail; ev
   const status = STATUS[v.status]!;
   return (
     <section className="tv-section" aria-label="Verification">
-      <SectionHeader title="Verification" trailing={<StateMark tone={status.tone} label={status.label} pulse={v.status === "RUNNING"} />} />
+      <SectionHeader
+        title="Verification"
+        trailing={<StateMark tone={status.tone} label={status.label} pulse={v.status === "RUNNING" || v.status === "COMPOSING"} />}
+      />
       {v.status === "NOT_STARTED" ? (
         <EmptyState title="Not yet verified">The result is checked against the evidence once all steps finish.</EmptyState>
+      ) : v.status === "COMPOSING" ? (
+        <EmptyState title="Composing the result">
+          All steps are finished. MORROW is composing the answer from the observations; each success criterion is then
+          checked against the evidence.
+        </EmptyState>
       ) : (
         <>
           <ul className="tv-checks">

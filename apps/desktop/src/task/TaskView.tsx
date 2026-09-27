@@ -11,7 +11,7 @@ import { PlanSection } from "./PlanSection";
 import { ResultSection } from "./ResultSection";
 import { TaskHeader } from "./TaskHeader";
 import { VerificationSection } from "./VerificationSection";
-import { pendingPermissions, proposedMemories } from "./model";
+import { pendingPermissions, proposedMemories, requestContext } from "./model";
 import "./task.css";
 
 export interface TaskActions {
@@ -66,7 +66,7 @@ export function TaskView({
       {permissions.length > 0 || memories.length > 0 ? (
         <div className="tv-decisions">
           {permissions.map((r) => (
-            <PermissionDecision key={r.id} request={r} onRespond={actions.respond} />
+            <PermissionDecision key={r.id} request={r} context={requestContext(detail, r)} onRespond={actions.respond} />
           ))}
           {memories.map((m) => (
             <MemoryDecision

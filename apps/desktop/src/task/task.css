@@ -120,6 +120,31 @@
   flex-wrap: wrap;
   gap: var(--m-space-2);
 }
+.tv-scopes {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+  padding-top: var(--m-space-2);
+  border-top: 1px solid var(--m-color-border-subtle);
+}
+.tv-scope {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: var(--m-space-4);
+  font-size: var(--m-type-body-small-size);
+  line-height: var(--m-type-body-small-line);
+}
+.tv-scope dt {
+  font-family: var(--m-type-label-family);
+  font-size: var(--m-type-micro-size);
+  letter-spacing: var(--m-type-label-tracking);
+  text-transform: uppercase;
+  color: var(--m-color-text-muted);
+}
+.tv-scope dd {
+  margin: 0;
+  color: var(--m-color-text-secondary);
+}
 .tv-sources {
   display: inline-flex;
   flex-wrap: wrap;

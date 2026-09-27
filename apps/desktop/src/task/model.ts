@@ -199,7 +199,8 @@ export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): Ti
         break;
       case "TOOL_REQUESTED": {
         const run = runs.get(e.payload.executionId);
-        push(`Tool requested · ${e.payload.toolId}`, summarizeInput(e.payload.input), "accent", run ? { toolRun: run } : {});
+        const purpose = e.payload.purpose ? `${e.payload.purpose} · ` : "";
+        push(`Tool requested · ${e.payload.toolId}`, `${purpose}${summarizeInput(e.payload.input)}`, "accent", run ? { toolRun: run } : {});
         break;
       }
       case "TOOL_PERMISSION_REQUIRED":
@@ -323,7 +324,8 @@ export interface VerificationCheck {
 }
 
 export interface VerificationView {
-  readonly status: "NOT_STARTED" | "RUNNING" | "PASSED" | "FAILED";
+  /** COMPOSING: the task is in VERIFYING and the answer is being composed before checks begin. */
+  readonly status: "NOT_STARTED" | "COMPOSING" | "RUNNING" | "PASSED" | "FAILED";
   readonly checks: readonly VerificationCheck[];
   readonly citedObservationIds: readonly string[];
   readonly failureReasons: readonly string[];
@@ -332,12 +334,15 @@ export interface VerificationView {
 export function verification(detail: TaskDetail, events: readonly MorrowEvent[]): VerificationView {
   const started = events.some((e) => e.type === "VERIFICATION_STARTED");
   const outcome = detail.task.result?.verification ?? null;
+  const verifying = detail.task.status === "VERIFYING";
   const status: VerificationView["status"] = outcome
     ? outcome.passed
       ? "PASSED"
       : "FAILED"
-    : started && detail.task.status === "VERIFYING"
-      ? "RUNNING"
+    : verifying
+      ? started
+        ? "RUNNING"
+        : "COMPOSING"
       : "NOT_STARTED";
 
   const descriptions = [...DETERMINISTIC, ...(detail.plan?.successCriteria ?? [])];
@@ -364,6 +369,17 @@ export function verification(detail: TaskDetail, events: readonly MorrowEvent[])
 }
 
 // ── Decisions awaiting the user ────────────────────────────────────
+
+/** The task context of a permission request: the call's stated purpose and its plan step. */
+export function requestContext(detail: TaskDetail, request: PermissionRequest) {
+  const execution = detail.executions.find((e) => e.id === request.executionId);
+  const step = execution?.stepId ? detail.steps.find((s) => s.id === execution.stepId) : undefined;
+  return {
+    purpose: execution?.purpose ?? null,
+    step: step ? `step ${step.ordinal + 1} of ${detail.steps.length}: ${step.title}` : null,
+    projectName: detail.project?.name ?? null,
+  };
+}
 
 export function pendingPermissions(detail: TaskDetail): PermissionRequest[] {
   return detail.permissionRequests.filter((r) => r.status === "PENDING");

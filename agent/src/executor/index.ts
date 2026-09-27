@@ -23,7 +23,7 @@ export class StepExecutor {
 
   async runToolStep(
     taskId: Id<"task">,
-    call: { toolId: string; input: unknown; stepId?: Id<"taskStep"> | null },
+    call: { toolId: string; input: unknown; stepId?: Id<"taskStep"> | null; purpose?: string | null },
     signal?: AbortSignal,
   ): Promise<{ outcome: ToolCallOutcome; task: Task }> {
     const task = this.tasks.get(taskId);
@@ -39,6 +39,7 @@ export class StepExecutor {
         taskId,
         projectId: task.projectId,
         stepId: call.stepId ?? null,
+        purpose: call.purpose ?? null,
         requestedBy: AGENT,
         ...(signal ? { signal } : {}),
       },

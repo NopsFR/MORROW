@@ -70,6 +70,22 @@ node scripts/desktop-live-check.mjs --workspace <dir> --objective "<task>" [--ca
 - `--mid-screenshot <png>`: capture the task view while it awaits permission;
 - `--cancel-open`: cancel tasks left open by earlier runs.
 
+### Verifying the workspace against the real pipeline
+
+```bash
+# App running with WebView2 remote debugging (see above)
+node scripts/desktop-verify.mjs --workspace <dir> --objective "<task needing a tool>" --out <dir>
+# after restarting the app:
+node scripts/desktop-verify.mjs --compare <dir>/snapshot.json --out <dir>
+```
+
+It drives the UI as a user, answers permission decisions with "Allow once", captures
+screenshots at each phase, and cross-checks everything shown against the database
+(read-only): pending/resolved permission requests, the call's persisted purpose,
+timeline entries vs persisted events (by sequence), plan steps, criteria, observations,
+executions and the result. It then reloads the page (and, in compare mode, checks a
+restarted app) to confirm the view is reconstructed identically.
+
 ## Resetting local state
 
 Live checks and manual testing write to the app's real data directory. To return to

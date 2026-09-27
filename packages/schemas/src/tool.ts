@@ -109,6 +109,8 @@ export const ToolExecutionSchema = z.object({
   taskId: TaskIdSchema.nullable(),
   stepId: TaskStepIdSchema.nullable(),
   status: ToolExecutionStatusSchema,
+  /** What the agent said the call is for (operational intent, not model reasoning). */
+  purpose: z.string().nullable(),
   input: JsonValueSchema,
   output: JsonValueSchema.nullable(),
   error: ErrorShapeSchema.nullable(),

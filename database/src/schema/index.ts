@@ -222,6 +222,7 @@ export const toolExecutions = sqliteTable(
     taskId: text("task_id"),
     stepId: text("step_id"),
     status: text("status").notNull(),
+    purpose: text("purpose"),
     input: text("input", { mode: "json" }),
     output: text("output", { mode: "json" }),
     error: text("error", { mode: "json" }),

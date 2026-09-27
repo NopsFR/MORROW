@@ -194,3 +194,23 @@ measured. Model judgement is never presented as objective truth.
 ### D40 — Development reset is a script, not a manual procedure
 `scripts/reset-dev-state.mjs` (dry run by default) removes only MORROW's app data,
 WebView data and live-check temp directories.
+
+---
+
+## Live workspace verification
+
+### D41 — Tool calls carry their stated purpose
+The decider's short statement of what a call is for ("Read package.json to extract the
+version") was previously discarded. It is now persisted on the tool execution
+(`tool_executions.purpose`, migration 0002, additive) and carried on `TOOL_REQUESTED`
+(optional, so earlier events remain valid). The permission panel shows it as "Why MORROW
+wants this" together with the plan step. It is operational intent, not model reasoning.
+
+### D42 — Permission panel states why the user is asked and what each choice covers
+A request only exists when no grant allowed the operation, so the panel says so, and lists
+each available choice with what it would authorise (capability, reach, risk ceiling).
+The choices offered still mirror the engine's ceilings, which the runtime enforces.
+
+### D43 — Verification shows the composing phase
+Between the last step and the first verification event the task is VERIFYING while the
+answer is composed; the panel now says "Composing result" instead of "Not started".

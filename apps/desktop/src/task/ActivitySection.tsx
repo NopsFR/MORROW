@@ -14,7 +14,7 @@ export function ActivitySection({ detail, events }: { detail: TaskDetail; events
       ) : (
         <ol className="tv-timeline">
           {entries.map((entry) => (
-            <li key={entry.sequence} className="tv-event" data-type={entry.type}>
+            <li key={entry.sequence} className="tv-event" data-type={entry.type} data-sequence={entry.sequence}>
               {entry.toolRun ? <ToolEntry entry={entry} run={entry.toolRun} /> : <PlainEntry entry={entry} />}
             </li>
           ))}
@@ -54,6 +54,7 @@ function ToolEntry({ entry, run }: { entry: TimelineEntry; run: ToolRun }) {
         <KeyValue
           rows={[
             ["Tool", <Mono>{`${execution.toolId} v${execution.toolVersion}`}</Mono>],
+            ["Purpose", execution.purpose ? <span>{execution.purpose}</span> : <span className="tv-muted">Not stated</span>],
             ["Input", <Mono>{run.inputSummary}</Mono>],
             [
               "Permission",

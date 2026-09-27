@@ -94,6 +94,8 @@ export const EVENT_PAYLOADS = {
     toolId: ToolIdSchema,
     toolVersion: z.string(),
     input: JsonValueSchema,
+    /** Optional: events recorded before purposes were captured have none. */
+    purpose: z.string().nullable().optional(),
   }),
   TOOL_PERMISSION_REQUIRED: z.object({
     executionId: ToolExecutionIdSchema,

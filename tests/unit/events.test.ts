@@ -20,6 +20,18 @@ describe("event catalogue", () => {
     expect(() => materializeDraft(bad as unknown as EventDraft, new TestClock())).toThrow();
   });
 
+  it("still parses TOOL_REQUESTED events recorded before call purposes existed", () => {
+    const old = materializeDraft(
+      {
+        type: "TOOL_REQUESTED",
+        actor: USER,
+        payload: { executionId: newId("toolExecution"), toolId: "filesystem.read_text_file", toolVersion: "1.0.0", input: {} },
+      },
+      new TestClock(),
+    );
+    expect(parseEvent({ ...old, sequence: 1 }).type).toBe("TOOL_REQUESTED");
+  });
+
   it("validates events at the parse boundary", () => {
     const draft = materializeDraft(
       { type: "TASK_STARTED", actor: USER, taskId: newId("task"), payload: { from: "IDLE", to: "PLANNING", reason: null } },

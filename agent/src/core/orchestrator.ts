@@ -292,7 +292,7 @@ export class Orchestrator {
 
     const { outcome } = await this.deps.stepExecutor.runToolStep(
       task.id,
-      { toolId: decision.toolId, input: decision.input, stepId: step.id },
+      { toolId: decision.toolId, input: decision.input, stepId: step.id, purpose: decision.note },
       signal,
     );
     this.updateStep(step, { toolExecutionId: outcome.execution.id });
