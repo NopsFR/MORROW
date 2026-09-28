@@ -112,7 +112,7 @@ export class ToolRuntime {
       const output = await this.runWithTimeout(tool, parsed.data, env, execution, request.signal);
       return this.succeed(tool, execution, output);
     } catch (error) {
-      return { execution: this.fail(tool, execution, error), observation: null };
+      return this.fail(tool, execution, error);
     }
   }
 
@@ -357,11 +357,29 @@ export class ToolRuntime {
     return { execution: done, observation };
   }
 
-  private fail(tool: AnyTool, execution: ToolExecution, error: unknown): ToolExecution {
+  /**
+   * Record a failed call. A genuine failure (status FAILED — e.g. the file does not
+   * exist) is also an observation of the world and is recorded as one, so later
+   * decisions and replans can cite it. Denials and cancellations are decisions,
+   * not observations, and produce none.
+   */
+  private fail(tool: AnyTool, execution: ToolExecution, error: unknown): ToolCallOutcome {
     const shape = toErrorShape(error);
     const status = error instanceof ToolCallFailure ? error.finalStatus : "FAILED";
     const now = this.deps.clock.now();
     const failed: ToolExecution = { ...execution, status, error: shape, finishedAt: now };
+    const observation: Observation | null =
+      status === "FAILED"
+        ? {
+            id: newId("observation", now),
+            taskId: failed.taskId,
+            stepId: failed.stepId,
+            source: { kind: "TOOL_EXECUTION", executionId: failed.id },
+            summary: `${tool.name} failed: ${shape.code}`,
+            data: { outcome: "FAILED", error: { code: shape.code, message: shape.message }, input: failed.input },
+            createdAt: now,
+          }
+        : null;
     this.deps.recorder.transact((emit) => {
       this.deps.executions.update(failed);
       emit({
@@ -376,7 +394,17 @@ export class ToolRuntime {
           durationMs: failed.startedAt === null ? null : Math.max(0, now - failed.startedAt),
         },
       });
+      if (observation) {
+        this.deps.observations.insert(observation);
+        emit({
+          type: "OBSERVATION_CREATED",
+          actor: { kind: "SYSTEM", id: "tool-runtime" },
+          taskId: failed.taskId,
+          correlationId: failed.id,
+          payload: { observationId: observation.id, source: observation.source, summary: observation.summary },
+        });
+      }
     });
-    return failed;
+    return { execution: failed, observation };
   }
 }

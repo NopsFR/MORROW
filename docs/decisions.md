@@ -113,7 +113,7 @@ task with `INVALID_MODEL_OUTPUT`. MORROW never edits or fills in model output.
 `think: false`. Measured on qwen3:4b: with thinking on, Ollama's constrained output was
 malformed (`{"answer": "}"}`); with it off, output was correct. Reasoning is never surfaced.
 
-### D25 — Plan metadata lives in PLAN_CREATED
+### D25 — Plan metadata lives in PLAN_CREATED (superseded by D44)
 Summary, success criteria and planning model are recorded in the event; steps in
 `task_steps`. A resumed run reconstructs the plan from these — no extra table.
 
@@ -214,3 +214,104 @@ The choices offered still mirror the engine's ceilings, which the runtime enforc
 ### D43 — Verification shows the composing phase
 Between the last step and the first verification event the task is VERIFYING while the
 answer is composed; the panel now says "Composing result" instead of "Not started".
+
+---
+
+## Agent Core 2 — dynamic replanning
+
+### D44 — Plan versions in a `plans` table; steps stay in `task_steps`
+Plan metadata used to live only in the PLAN_CREATED event. Replanning needs plans to be
+mutable task state with history, so each version is a row (version, previous version,
+status, summary, criteria, kept steps, reason, trigger observations, model, times).
+`task_steps` already carried `plan_id`, so no step table was added. Migration 0003
+creates the table and backfills version 1 for every existing task from its PLAN_CREATED
+event; PLAN_CREATED is still emitted for version 1.
+
+### D45 — Replanning is a decider action, not an extra evaluation call
+The model already sees every result when choosing the next action, so "is the plan still
+valid?" is answered there: `replan` joins `call_tool`, `complete_step`, `cannot_proceed`.
+This avoids a model call after every observation. The replan itself runs in the existing
+PLANNING phase via `ModelPlanner.replan`; there is no second loop or state machine.
+
+### D46 — One new transition: EXECUTING → PLANNING
+The public state machine gains no state. Replanning shows as PLANNING with status reason
+`REPLANNING`, which the workspace renders as "Replanning".
+
+### D47 — Replan events
+`PLAN_REPLAN_REQUESTED` (new) and `PLAN_REPLAN_REJECTED` (new). The adopted replan is
+recorded as `PLAN_UPDATED` — the catalogue's original, never-emitted placeholder for plan
+changes (also required by the first MORROW spec), now given a full payload — rather than
+adding a duplicate `PLAN_REPLANNED`.
+
+### D48 — Failed tool calls are observations
+A FAILED execution (e.g. PATH_NOT_FOUND) now creates an observation recording the error,
+so plan invalidation can be grounded in cited evidence. Denied and cancelled calls create
+none: those are user/runtime decisions, not facts about the world.
+
+### D49 — Steps are referred to by position in replan proposals
+Small models copy long ids unreliably; proposals reference "step 2 of the current plan",
+which the runtime maps to ids and validates. Observation ids are still cited literally and
+must match exactly.
+
+### D50 — Default replan limit 3 (per task, configurable)
+Counts replan requests (adopted or rejected), so a model that keeps asking and a planner
+that keeps declining cannot loop. Exceeding it fails the task with `REPLAN_LIMIT_REACHED`.
+
+### D51 — The verifier's citations get the standard correction attempt
+Found live: qwen3:4b mangled an observation id in a verdict (`obs_01M:3GY…`). Verdicts
+now go through the same rule as decisions and replans — unknown ids are rejected with one
+correction attempt, never repaired. The composed answer's citations are unchanged: those
+are what verification exists to check.
+
+### D52 — The bundled runtime keeps its directory layout and plain paths
+Found by smoke-launching the release build: the resource mapping `runtime/**/*` flattened
+the runtime (no `node_modules/`, no `migrations/meta/`), and Tauri's resource directory is
+an extended-length path (`\\?\C:\...`) that Node cannot use for its entry script
+(`EISDIR: lstat 'C:'`), so the runtime exited at startup. The mapping is now
+`"runtime/": "runtime/"`, and `launch.rs` strips the `\\?\` prefix from drive-letter and
+UNC paths before spawning (other `\\?\` forms are left as they are).
+
+### D53 — A terminal task never leaves a step RUNNING
+Found in a release-build run. The model twice asked to replan without citing evidence, so
+the task failed with `INVALID_MODEL_OUTPUT`, but its step stayed `RUNNING`. The UI then
+showed activity on a finished task. This predates replanning. An audit found the same gap
+on cancellation and on internal errors (`INTERNAL_ERROR`, `LOOP_LIMIT`), not only on model
+errors. The rule is therefore enforced where task state is written: `TaskService.transition`,
+in the same transaction as the terminal transition.
+
+- **FAILED:** the running step becomes FAILED, with the task's reason as its outcome.
+- **CANCELLED:** the running step becomes SKIPPED, with the outcome "Stopped: the task was
+  cancelled". The step was stopped, not failed, and no new status is needed.
+- **PENDING steps** never started, so they stay PENDING.
+- **PAUSED and WAITING** are not terminal, so a running step stays running and can resume,
+  including after restart recovery.
+
+The orchestrator also refuses to write a step once its task has ended. Otherwise a run
+halted by cancel would write back the copy of the step it held across the tool call and
+reopen the step. Steps already stuck in `RUNNING` from before this change are left as
+recorded; nothing rewrites history.
+
+Three things keep this universal:
+- Only `TaskService` writes task status, and a test fails if any other source file calls
+  `updateIfVersion`.
+- A test walks every terminal transition the state machine allows.
+- The test helper checks every test runtime before it closes: no ended task has a RUNNING
+  step, a PENDING permission request or an unfinished tool execution.
+
+### D54 — Known limitation: success criteria are not grounded (pre-existing, open)
+The planner writes success criteria before anything has been observed, and nothing checks
+them against the objective. So the model can add assumptions the user never made, and
+verification then fails a correct answer against them.
+
+- **Example.** In the Agent Core 2 release runs, the objective "What version is declared
+  in pyproject.toml?" produced the criterion "…under the [tool.poetry] section". The file
+  uses `[project]`. The answer (2.4.1) was right, and the verifier correctly judged that
+  criterion unmet. This happened in 3 of 4 runs with version objectives. D27 is the same
+  problem, first seen in milestone 2.
+- **Not caused by replanning.** The initial planning prompt, planner path and context are
+  unchanged since before this milestone.
+- **Why it isn't patched here.** Verification stays strict: a failing criterion is never
+  relaxed to match an answer, and answers are never adjusted to match criteria. The fix is
+  a design change. Criteria should be derived from the objective and validated against
+  it, and verification should judge them against observations. That is the next
+  milestone's scope.

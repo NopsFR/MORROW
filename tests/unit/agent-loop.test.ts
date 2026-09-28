@@ -10,6 +10,7 @@ import {
   cannotProceed,
   completeStep,
   composeCitingAll,
+  observationIds,
   plan,
   verdictsAllMet,
 } from "./scripted-ollama";
@@ -286,6 +287,47 @@ describe("agent loop — tools, permissions and verification", () => {
     expect(after.result?.observationIds).toEqual([]);
     expect(eventTypes(rt, task.id)).toContain("VERIFICATION_FAILED");
     expect(rt.memoryService.list({ taskId: task.id })).toHaveLength(0);
+  });
+
+  it("gives the verifier one correction when it cites an observation that does not exist", async () => {
+    const { rt, ollama } = await setup();
+    const { project } = workspace(rt);
+    const mangled = (id: string) => `${id.slice(0, 7)}:${id.slice(7)}`; // the corruption qwen3:4b produced live
+    ollama.script(
+      { expect: "PLAN", reply: plan([{ title: "Read notes", tools: ["filesystem.read_text_file"] }], READ_CRITERIA) },
+      { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },
+      { expect: "DECIDE", reply: completeStep() },
+      { expect: "COMPOSE", reply: composeCitingAll("4471") },
+      { expect: "VERIFY", reply: (c) => ({ verdicts: [{ criterion: READ_CRITERIA[0], met: true, observationIds: [mangled(observationIds(c.prompt)[0]!)], explanation: "shown" }] }) },
+      { expect: "VERIFY", reply: verdictsAllMet(READ_CRITERIA) },
+    );
+    answerNext(rt, "ALLOW");
+    const task = rt.taskService.create({ objective: "Launch code?", projectId: project.id }, USER);
+    const done = await rt.orchestrator.start(task.id);
+    expect(done.status).toBe("COMPLETED");
+    const correction = JSON.stringify(ollama.calls.at(-1)!.body.messages);
+    expect(correction).toContain("observationIds must be ids of observations listed above");
+    // A second bad citation is not repaired: verification fails through the normal path.
+  });
+
+  it("does not repair a verifier citation that stays invalid after correction", async () => {
+    const { rt, ollama } = await setup();
+    const { project } = workspace(rt);
+    const bad = { verdicts: [{ criterion: READ_CRITERIA[0], met: true, observationIds: ["obs_01M:NOTREAL"], explanation: "x" }] };
+    ollama.script(
+      { expect: "PLAN", reply: plan([{ title: "Read notes", tools: ["filesystem.read_text_file"] }], READ_CRITERIA) },
+      { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },
+      { expect: "DECIDE", reply: completeStep() },
+      { expect: "COMPOSE", reply: composeCitingAll("4471") },
+      { expect: "VERIFY", reply: bad },
+      { expect: "VERIFY", reply: bad },
+    );
+    answerNext(rt, "ALLOW");
+    const task = rt.taskService.create({ objective: "Launch code?", projectId: project.id }, USER);
+    const done = await rt.orchestrator.start(task.id);
+    expect(done.status).toBe("FAILED");
+    expect(done.statusReason?.code).toBe("VERIFICATION_FAILED");
+    expect(done.result?.verification.passed).toBe(false);
   });
 
   it("writes a file as a tracked artifact", async () => {

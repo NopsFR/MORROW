@@ -66,6 +66,32 @@ export const taskSteps = sqliteTable(
   (t) => [index("task_steps_task_idx").on(t.taskId, t.ordinal)],
 );
 
+/**
+ * Plan versions of a task. task_steps.plan_id refers to the version that created
+ * the step. Exactly one version per task is ACTIVE; earlier versions are kept.
+ */
+export const plans = sqliteTable(
+  "plans",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    previousPlanId: text("previous_plan_id"),
+    status: text("status").notNull(),
+    summary: text("summary").notNull(),
+    successCriteria: text("success_criteria", { mode: "json" }).$type<string[]>().notNull(),
+    keptStepIds: text("kept_step_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+    reason: text("reason"),
+    triggerObservationIds: text("trigger_observation_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+    modelId: text("model_id"),
+    createdAt: integer("created_at").notNull(),
+    supersededAt: integer("superseded_at"),
+  },
+  (t) => [uniqueIndex("plans_task_version_idx").on(t.taskId, t.version)],
+);
+
 // ── Events & observations ─────────────────────────────────────────────────
 
 /** Append-only. Rows are never updated or deleted by application code. */

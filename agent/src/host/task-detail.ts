@@ -1,6 +1,6 @@
 import type { Id } from "@morrow/shared";
 import type { ModelPurpose } from "@morrow/schemas";
-import type { TaskDetail, TaskModel, TaskPlan } from "@morrow/protocol";
+import type { TaskDetail, TaskModel } from "@morrow/protocol";
 import type { Runtime } from "./container";
 
 /**
@@ -12,7 +12,8 @@ export function readTaskDetail(rt: Runtime, taskId: Id<"task">): TaskDetail {
   return {
     task,
     project: task.projectId ? rt.repos.projects.get(task.projectId) : null,
-    plan: readPlan(rt, taskId),
+    plan: rt.repos.plans.active(taskId),
+    plans: rt.repos.plans.listByTask(taskId),
     steps: rt.repos.taskSteps.listByTask(taskId),
     executions: rt.repos.toolExecutions.listByTask(taskId),
     permissionRequests: rt.repos.permissionRequests.listByTask(taskId),
@@ -22,18 +23,6 @@ export function readTaskDetail(rt: Runtime, taskId: Id<"task">): TaskDetail {
       .list({ taskId, limit: 50 })
       .map((memory) => ({ memory, sources: rt.memoryService.detail(memory.id).sources })),
     models: readModels(rt, taskId),
-  };
-}
-
-function readPlan(rt: Runtime, taskId: Id<"task">): TaskPlan | null {
-  const event = rt.eventLog.list({ taskId, types: ["PLAN_CREATED"] }).at(-1);
-  if (!event || event.type !== "PLAN_CREATED") return null;
-  return {
-    planId: event.payload.planId,
-    summary: event.payload.summary,
-    successCriteria: event.payload.successCriteria,
-    modelId: event.payload.modelId,
-    createdAt: event.occurredAt,
   };
 }
 

@@ -11,6 +11,7 @@
  *
  * Modes:
  *   run:      --workspace <dir> --objective "<task>" --out <dir>
+ *   capture:  --capture <out>/snapshot.json --out <dir>   (re-check an existing task, save a baseline)
  *   compare:  --compare <out>/snapshot.json --out <dir>   (e.g. after restarting the app)
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -44,7 +45,9 @@ function db() {
 }
 
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${arg("port") ?? "9223"}`);
-const page = browser.contexts()[0].pages().find((p) => p.url().includes("localhost:1420"));
+// Dev builds serve the UI from the Vite server; release builds from tauri.localhost.
+const page = browser.contexts()[0].pages().find((p) => /localhost:1420|tauri\.localhost/.test(p.url()));
+if (!page) throw new Error("No MORROW window found on the debugging port");
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 const nav = page.getByRole("navigation", { name: "MORROW" });
@@ -64,7 +67,14 @@ async function snapshot() {
     return {
       status: el.getAttribute("data-status"),
       header: text(".tv-header__objective, .tv-header__id, .tv-header__doing, .tv-fact"),
-      plan: text(".tv-step"),
+      plan: text('[aria-label="Plan"] > .tv-steps > .tv-step'),
+      planVersion: el.querySelector('[data-testid="plan-version"]')?.textContent?.trim() ?? null,
+      replanReason: el.querySelector('[data-testid="plan-replan-reason"] p')?.innerText.trim() ?? null,
+      previousPlans: [...el.querySelectorAll('[data-testid="previous-plan"]')].map((d) => ({
+        summary: d.querySelector("summary")?.innerText.replace(/\s+/g, " ").trim(),
+        // textContent: earlier versions sit in a collapsed <details>, where innerText is empty.
+        steps: [...d.querySelectorAll(".tv-step")].map((n) => ({ status: n.getAttribute("data-status"), text: n.textContent.replace(/\s+/g, " ").trim() })),
+      })),
       criteria: text(".tv-criteria li"),
       events: [...el.querySelectorAll(".tv-event")].map((n) => ({
         sequence: Number(n.getAttribute("data-sequence")),
@@ -80,22 +90,45 @@ async function snapshot() {
   });
 }
 
-async function openTaskByObjective(objective) {
-  const item = page.locator(".task-rail__item").filter({ hasText: objective.slice(0, 30) }).first();
+/** Opens a task by id: objectives repeat across runs, so find its row by the rail's own order. */
+async function openTask(taskId, objective) {
+  await nav.locator("a, button").filter({ hasText: /workspace/i }).first().click();
+  const d = db();
+  const order = d.prepare("select id from tasks order by created_at desc limit 40").all().map((r) => r.id);
+  d.close();
+  const index = order.indexOf(taskId);
+  if (index === -1) throw new Error(`${taskId} is not among the 40 newest tasks the rail shows`);
+  const item = page.locator(".task-rail__item").nth(index);
   await item.waitFor({ timeout: 20_000 });
+  const title = await item.locator(".task-rail__title").innerText();
+  if (!objective.startsWith(title.replace(/…$/, "").trim().slice(0, 20))) throw new Error(`rail row ${index} is "${title}", not ${taskId}`);
   if ((await item.getAttribute("aria-current")) !== "true") await item.click();
   await view.waitFor({ timeout: 10_000 });
   await page.waitForTimeout(800);
 }
 
+// ── capture mode: re-snapshot an existing task (e.g. to take a restart baseline) ──
+if (arg("capture")) {
+  const saved = JSON.parse(readFileSync(arg("capture"), "utf8"));
+  await openTask(saved.taskId, saved.objective);
+  const snap = await snapshot();
+  crossCheck(saved.taskId, snap);
+  writeFileSync(join(out, "snapshot-baseline.json"), JSON.stringify({ taskId: saved.taskId, objective: saved.objective, snapshot: snap }, null, 2));
+  log(`baseline saved: ${join(out, "snapshot-baseline.json")}`);
+  check("no page errors", pageErrors.length === 0, pageErrors.join("; "));
+  await browser.close();
+  process.exit(checks.every((c) => c.ok) ? 0 : 1);
+}
+
 // ── compare mode: reconstruct after an app restart ──────────────────────────
 if (arg("compare")) {
   const saved = JSON.parse(readFileSync(arg("compare"), "utf8"));
-  await openTaskByObjective(saved.objective);
+  await openTask(saved.taskId, saved.objective);
   const now = await snapshot();
   const same = JSON.stringify(now) === JSON.stringify(saved.snapshot);
   check("task view after app restart matches the view before restart", same, same ? `${now.events.length} events, ${now.plan.length} steps` : "differs");
   if (!same) writeFileSync(join(out, "snapshot-after-restart.json"), JSON.stringify(now, null, 2));
+  crossCheck(saved.taskId, now);
   await shot("6-after-restart");
   check("no page errors", pageErrors.length === 0, pageErrors.join("; "));
   await browser.close();
@@ -195,6 +228,23 @@ while (Date.now() < deadline) {
       check(`permission #${allowed + 1}: UI states what each choice covers`, ui.scopes.length >= 4 && ui.scopes.some((x) => /only this operation/.test(x)) && ui.scopes.some((x) => x.includes(`${req.capability} for the rest of this task`)), ui.scopes.join(" | "));
     }
     check(`permission #${allowed + 1}: allow and deny controls present`, ui.buttons.some((b) => b.label === "ALLOW ONCE" || b.label === "Allow once") && ui.buttons.some((b) => /deny/i.test(b.label)));
+    if (args.includes("--cancel-at-permission")) {
+      // Cancel mid-step, as a user would, while the step is RUNNING and a question is open.
+      const d4 = db();
+      const runningBefore = d4.prepare("select count(*) n from task_steps where task_id = ? and status = 'RUNNING'").get(taskId).n;
+      d4.close();
+      check("a step is running when the user cancels", runningBefore === 1, `${runningBefore} running`);
+      await view.locator(".tv-toolbar").getByRole("button", { name: "Cancel" }).click();
+      await page.waitForFunction(() => document.querySelector('[aria-label="Task"]')?.getAttribute("data-status") === "CANCELLED", null, { timeout: 15_000 });
+      log(`cancelled from the UI during: ${ui.operation}`);
+      const d5 = db();
+      const request = req ? d5.prepare("select status from permission_requests where id = ?").get(req.id) : null;
+      const stopped = d5.prepare("select status, outcome from task_steps where task_id = ? and status = 'SKIPPED'").all(taskId);
+      d5.close();
+      check("the open permission question was withdrawn", request?.status !== "PENDING", request?.status);
+      check("the running step is recorded as stopped by the cancel", stopped.length === 1 && /cancelled/.test(stopped[0].outcome ?? ""), JSON.stringify(stopped));
+      break;
+    }
     await decision.getByRole("button", { name: "Allow once" }).click();
     allowed++;
     log(`allowed once: ${ui.operation}`);
@@ -214,6 +264,11 @@ while (Date.now() < deadline) {
     await shot("3-tool-activity");
     captured.add("activity");
   }
+  if (!captured.has("replan") && (await view.locator('.tv-event[data-type="PLAN_UPDATED"]').count()) > 0) {
+    await view.getByRole("region", { name: "Plan" }).scrollIntoViewIfNeeded();
+    await shot("3b-replanned");
+    captured.add("replan");
+  }
   if (!captured.has("verifying") && status === "VERIFYING") {
     await view.getByRole("region", { name: "Verification" }).scrollIntoViewIfNeeded();
     await shot("4-verifying");
@@ -232,14 +287,20 @@ await shot("5b-verification-and-observations");
 
 // 3. Cross-check the rendered view against the database.
 const snap = await snapshot();
-{
+crossCheck(taskId, snap);
+
+/** Everything the view shows must match what the runtime persisted. */
+function crossCheck(taskId, snap) {
   const d = db();
   const task = d.prepare("select * from tasks where id = ?").get(taskId);
   const events = d.prepare("select sequence, type from events where task_id = ? order by sequence").all(taskId);
   const executions = d.prepare("select id, tool_id, status from tool_executions where task_id = ?").all(taskId);
   const observations = d.prepare("select id from observations where task_id = ?").all(taskId);
-  const steps = d.prepare("select title, status from task_steps where task_id = ? order by ordinal").all(taskId);
-  const planEvent = d.prepare("select payload from events where task_id = ? and type = 'PLAN_CREATED'").get(taskId);
+  const plans = d.prepare("select * from plans where task_id = ? order by version").all(taskId);
+  const active = plans.find((p) => p.status === "ACTIVE");
+  const kept = new Set(JSON.parse(active?.kept_step_ids ?? "[]"));
+  const allSteps = d.prepare("select id, plan_id, title, status from task_steps where task_id = ? order by ordinal").all(taskId);
+  const steps = allSteps.filter((s) => s.plan_id === active?.id || kept.has(s.id));
   d.close();
 
   const visible = events.filter((e) => !HIDDEN_TYPES.has(e.type));
@@ -249,12 +310,46 @@ const snap = await snapshot();
     rendered.length === visible.length && rendered.every((r, i) => r.sequence === visible[i].sequence && r.type === visible[i].type),
     `${rendered.length} rendered / ${visible.length} persisted (+${events.length - visible.length} folded)`,
   );
-  check("timeline covers the pipeline", ["TASK_CREATED", "PLAN_CREATED", "TOOL_REQUESTED", "TOOL_PERMISSION_REQUIRED", "PERMISSION_RESOLVED", "TOOL_COMPLETED", "OBSERVATION_CREATED", "VERIFICATION_STARTED"].every((t) => rendered.some((r) => r.type === t)));
-  check("plan steps match task_steps", snap.plan.length === steps.length && steps.every((s, i) => snap.plan[i].includes(s.title)), steps.map((s) => `${s.title}:${s.status}`).join(", "));
-  const plan = JSON.parse(planEvent.payload);
-  check("success criteria match PLAN_CREATED", JSON.stringify(snap.criteria) === JSON.stringify(plan.successCriteria));
+  // A task that fails before verification (e.g. invalid model output) has no verification events.
+  const reachedVerification = task.status === "COMPLETED" || JSON.parse(task.status_reason ?? "null")?.code === "VERIFICATION_FAILED";
+  // Required events follow what the database says happened, not the outcome we hoped for.
+  const ranTool = executions.some((e) => e.status === "SUCCEEDED" || e.status === "FAILED");
+  const pipeline = ["TASK_CREATED", "PLAN_CREATED", "TOOL_REQUESTED", "TOOL_PERMISSION_REQUIRED", "PERMISSION_RESOLVED"];
+  if (executions.some((e) => e.status === "SUCCEEDED")) pipeline.push("TOOL_COMPLETED");
+  if (ranTool) pipeline.push("OBSERVATION_CREATED");
+  if (reachedVerification) pipeline.push("VERIFICATION_STARTED");
+  const missing = pipeline.filter((t) => !rendered.some((r) => r.type === t));
+  check("timeline covers the pipeline the task went through", missing.length === 0, missing.length ? `missing ${missing.join(", ")}` : `${task.status}${reachedVerification ? ", verified" : `, ended before verification (${JSON.parse(task.status_reason ?? "null")?.code ?? "no reason given"})`}`);
+  if (["COMPLETED", "FAILED", "CANCELLED"].includes(task.status)) {
+    check("a finished task leaves no step running", !allSteps.some((s) => s.status === "RUNNING"), allSteps.map((s) => s.status).join(", "));
+  }
+  check("current plan steps match the active plan version", snap.plan.length === steps.length && steps.every((s, i) => snap.plan[i].includes(s.title)), steps.map((s) => `${s.title}:${s.status}`).join(", "));
+  check("shown plan version is the active version", snap.planVersion === `v${active?.version}`, `${snap.planVersion} / ${plans.length} version(s)`);
+  check("every earlier plan version is still shown", snap.previousPlans.length === plans.length - 1);
+  if (plans.length > 1) {
+    check("replan reason shown equals the persisted reason", snap.replanReason === active.reason, active.reason);
+    for (const p of plans.filter((x) => x.status === "SUPERSEDED")) {
+      const own = allSteps.filter((st) => st.plan_id === p.id);
+      // The heading is CSS-uppercased, so innerText reads "PLAN V1".
+      const shown = snap.previousPlans.find((x) => x.summary?.toLowerCase().includes(`plan v${p.version} `));
+      check(`plan v${p.version} steps shown with their persisted statuses`, Boolean(shown) && own.every((st) => shown.steps.some((x) => x.status === st.status && x.text.includes(st.title))), own.map((st) => `${st.title}:${st.status}`).join(", "));
+    }
+    const d2 = db();
+    const updates = d2.prepare("select payload from events where task_id = ? and type = 'PLAN_UPDATED'").all(taskId).map((r) => JSON.parse(r.payload));
+    const obsIds = new Set(d2.prepare("select id from observations where task_id = ?").all(taskId).map((r) => r.id));
+    d2.close();
+    check("every replan cites only real observations of the task", updates.every((u) => u.observationIds.every((id) => obsIds.has(id))), updates.map((u) => u.observationIds.join(",")).join(" | "));
+  }
+  check("success criteria match the active plan version", JSON.stringify(snap.criteria) === active?.success_criteria, active?.success_criteria);
   check("observations match the database", snap.observations.length === observations.length && observations.every((o) => snap.observations.some((m) => m.includes(o.id))), `${observations.length} observation(s)`);
-  check("tool executions happened for real", executions.some((e) => e.status === "SUCCEEDED"), executions.map((e) => `${e.tool_id}=${e.status}`).join(", "));
+  const executionList = executions.map((e) => `${e.tool_id}=${e.status}`).join(", ");
+  if (task.status === "CANCELLED" && !ranTool) {
+    // Cancelled before any tool ran: the pending call must be closed as CANCELLED and never started.
+    const started = events.some((e) => e.type === "TOOL_STARTED");
+    check("the interrupted tool call was cancelled, never run", executions.length > 0 && executions.every((e) => e.status === "CANCELLED") && !started, executionList);
+  } else {
+    check("tool executions happened for real", executions.some((e) => e.status === "SUCCEEDED"), executionList);
+  }
   const result = task.result ? JSON.parse(task.result) : null;
   check("result shown equals the persisted result", result ? snap.result[0] === result.answer.replace(/\s+/g, " ").trim() : snap.result.length === 0, result?.answer);
   check("status shown equals the persisted status", snap.status === task.status, task.status);
@@ -265,7 +360,7 @@ const snap = await snapshot();
 await page.reload();
 await nav.waitFor({ timeout: 30_000 });
 await page.waitForTimeout(2500);
-await openTaskByObjective(objective);
+await openTask(taskId, objective);
 const reloaded = await snapshot();
 check("task view after page reload is identical", JSON.stringify(reloaded) === JSON.stringify(snap), `${reloaded.events.length} events`);
 if (JSON.stringify(reloaded) !== JSON.stringify(snap)) writeFileSync(join(out, "snapshot-after-reload.json"), JSON.stringify(reloaded, null, 2));

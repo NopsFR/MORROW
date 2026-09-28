@@ -25,15 +25,30 @@ export interface Phase {
   readonly doing: string;
 }
 
+/**
+ * Steps of the plan version in force: its own steps plus completed steps it kept
+ * from earlier versions, in execution order. Tasks without a plan yet have none.
+ */
+export function currentPlanSteps(detail: TaskDetail): TaskStep[] {
+  const plan = detail.plan;
+  if (!plan) return [];
+  const kept = new Set<string>(plan.keptStepIds);
+  return detail.steps.filter((s) => s.planId === plan.id || kept.has(s.id));
+}
+
 export function phaseOf(detail: TaskDetail): Phase {
-  const { task, steps } = detail;
+  const { task } = detail;
+  const steps = currentPlanSteps(detail);
   const step = activeStep(steps);
-  const position = step ? `step ${step.ordinal + 1} of ${steps.length}` : "";
+  const position = step ? `step ${steps.indexOf(step) + 1} of ${steps.length}` : "";
   // Header text stays short; full reasons are shown in the section they belong to.
   const reason = task.statusReason ? clipReason(task.statusReason.code, task.statusReason.message) : undefined;
   const map: Record<TaskStatus, Phase> = {
     IDLE: { label: "Queued", tone: "neutral", active: false, doing: "Not started" },
-    PLANNING: { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
+    PLANNING:
+      task.statusReason?.code === "REPLANNING"
+        ? { label: "Replanning", tone: "accent", active: true, doing: `Revising plan v${detail.plan?.version ?? 1}: ${reason}` }
+        : { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
     EXECUTING: { label: "Executing", tone: "accent", active: true, doing: step ? `Working on ${position}: ${step.title}` : "Choosing the next action" },
     OBSERVING: { label: "Observing", tone: "accent", active: true, doing: "Recording what the tool returned" },
     AWAITING_PERMISSION: {
@@ -107,10 +122,10 @@ export interface PlanStepView {
   readonly calls: readonly { toolId: string; status: ToolExecution["status"] }[];
 }
 
-export function planSteps(detail: TaskDetail): PlanStepView[] {
-  return detail.steps.map((step) => ({
+export function planSteps(detail: TaskDetail, steps: readonly TaskStep[] = currentPlanSteps(detail)): PlanStepView[] {
+  return steps.map((step, index) => ({
     step,
-    number: step.ordinal + 1,
+    number: index + 1,
     active: step.status === "RUNNING",
     expectedTools: step.expectedToolIds,
     calls: detail.executions.filter((e) => e.stepId === step.id).map((e) => ({ toolId: e.toolId, status: e.status })),
@@ -187,8 +202,18 @@ export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): Ti
       case "PLAN_CREATED":
         push("Plan created", `${e.payload.steps.length} step${e.payload.steps.length === 1 ? "" : "s"} · ${e.payload.summary}`, "accent");
         break;
+      case "PLAN_REPLAN_REQUESTED":
+        push(`Replan requested · plan v${e.payload.planVersion}`, e.payload.reason, "warning");
+        break;
       case "PLAN_UPDATED":
-        push("Plan updated", e.payload.reason, "accent");
+        push(
+          `Replanned · v${e.payload.previousVersion} → v${e.payload.planVersion}`,
+          `${e.payload.steps.length} new step${e.payload.steps.length === 1 ? "" : "s"}${e.payload.keptStepIds.length ? `, ${e.payload.keptStepIds.length} kept` : ""} · ${e.payload.reason}`,
+          "accent",
+        );
+        break;
+      case "PLAN_REPLAN_REJECTED":
+        push(`Plan v${e.payload.planVersion} kept`, e.payload.reason);
         break;
       case "MODEL_RESPONDED":
         push(
@@ -287,6 +312,9 @@ export function conciseContent(data: JsonValue, max = 400): string {
     if (Array.isArray(d.matches)) {
       return `${d.matches.length} match${d.matches.length === 1 ? "" : "es"}: ${d.matches.slice(0, 20).join(", ")}${d.matches.length > 20 ? ", …" : ""}`;
     }
+    if (d.outcome === "FAILED" && d.error && typeof d.error === "object" && !Array.isArray(d.error)) {
+      return `Failed: ${String(d.error.code)} — ${String(d.error.message)}`;
+    }
     if (typeof d.bytesWritten === "number") {
       return `Wrote ${d.bytesWritten} bytes to ${String(d.path)} (sha256 ${String(d.sha256).slice(0, 12)}…)`;
     }
@@ -373,10 +401,11 @@ export function verification(detail: TaskDetail, events: readonly MorrowEvent[])
 /** The task context of a permission request: the call's stated purpose and its plan step. */
 export function requestContext(detail: TaskDetail, request: PermissionRequest) {
   const execution = detail.executions.find((e) => e.id === request.executionId);
-  const step = execution?.stepId ? detail.steps.find((s) => s.id === execution.stepId) : undefined;
+  const current = currentPlanSteps(detail);
+  const step = execution?.stepId ? current.find((s) => s.id === execution.stepId) : undefined;
   return {
     purpose: execution?.purpose ?? null,
-    step: step ? `step ${step.ordinal + 1} of ${detail.steps.length}: ${step.title}` : null,
+    step: step ? `step ${current.indexOf(step) + 1} of ${current.length}: ${step.title}` : null,
     projectName: detail.project?.name ?? null,
   };
 }

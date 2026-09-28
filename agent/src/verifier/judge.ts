@@ -54,10 +54,16 @@ export class ResultJudge {
       purpose: "VERIFY",
       ...verificationPrompt(context, criteria, answer, history),
       schema: VerdictOutputSchema,
-      validate: (v) =>
-        v.verdicts.length === criteria.length
-          ? null
-          : `expected exactly ${criteria.length} verdicts (one per criterion), got ${v.verdicts.length}`,
+      validate: (v) => {
+        if (v.verdicts.length !== criteria.length) {
+          return `expected exactly ${criteria.length} verdicts (one per criterion), got ${v.verdicts.length}`;
+        }
+        // Same evidence rule as decisions and replans: a verdict may only cite observations
+        // listed above. A mistyped id gets one correction attempt; it is never repaired.
+        const known = new Set(history.flatMap((h) => (h.observation ? [h.observation.id as string] : [])));
+        const unknown = [...new Set(v.verdicts.flatMap((x) => x.observationIds))].filter((id) => !known.has(id));
+        return unknown.length ? `observationIds must be ids of observations listed above; unknown: ${unknown.join(", ")}` : null;
+      },
       maxOutputTokens: 1500,
       ...(signal ? { signal } : {}),
     });

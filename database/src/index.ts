@@ -10,3 +10,4 @@ export { SqlitePermissionGrantRepository, SqlitePermissionRequestRepository } fr
 export { ModelRepository } from "./repositories/models";
 export { SettingsRepository } from "./repositories/settings";
 export { ArtifactRepository } from "./repositories/artifacts";
+export { PlanRepository } from "./repositories/plans";

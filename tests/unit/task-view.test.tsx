@@ -12,6 +12,8 @@ import {
   completeStep,
   composeCitingAll,
   plan,
+  replanProposal,
+  requestReplan,
   verdictsAllMet,
 } from "./scripted-ollama";
 import { connectedWorkspace, makeWorkspaceDir, nextEvent, workspaceReaches } from "./workspace-fixtures";
@@ -270,6 +272,69 @@ describe("task view — rendered from real persisted state", () => {
     expect(t).toContain("The observation shows 4471, not 9999");
     expect(t).toContain("tools produced observations but the answer cites none");
     expect(t).not.toContain("Memory proposed"); // nothing is proposed from an unverified result
+  });
+
+  it("shows a replanned task: current version, why it changed, and the superseded plan", async () => {
+    const ctx = await connectedWorkspace();
+    const { project } = makeWorkspaceDir(ctx.rt, { "Cargo.toml": '[package]\nversion = "0.4.2"\n' });
+    const failure = (p: string) => p.match(/→ FAILED \([^)]*\), observation (obs_[0-9A-Z]{26})/)![1]!;
+    ctx.ollama.script(
+      { expect: "PLAN", reply: plan([{ title: "Read package.json", tools: ["filesystem.read_text_file"] }, { title: "Extract the version" }], ["The version is reported"]) },
+      { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "package.json" }, "Read the manifest") },
+      { expect: "DECIDE", reply: (c) => requestReplan("package.json does not exist", [failure(c.prompt)]) },
+      {
+        expect: "REPLAN",
+        reply: (c) => replanProposal({ reason: "No package.json; Cargo.toml holds the version", affectedSteps: [1, 2], evidence: [failure(c.prompt)], steps: [{ title: "Read Cargo.toml", tools: ["filesystem.read_text_file"] }] }),
+      },
+      { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "Cargo.toml" }, "Read the Rust manifest") },
+      { expect: "DECIDE", reply: completeStep("Version 0.4.2") },
+      { expect: "COMPOSE", reply: composeCitingAll("The version is 0.4.2.") },
+      { expect: "VERIFY", reply: verdictsAllMet(["The version is reported"]) },
+    );
+    ctx.rt.bus.subscribeTo("TOOL_PERMISSION_REQUIRED", (e) =>
+      queueMicrotask(() => ctx.rt.permissionAuthority.respond({ requestId: e.payload.requestId, decision: "ALLOW", scope: "ONE_TIME" })),
+    );
+    const task = await ctx.client.request("task.create", { objective: "Find the project's package version", projectId: project.id });
+    await ctx.workspace.select(task.id);
+    await workspaceReaches(ctx.workspace, ["COMPLETED"]);
+    await ctx.settleRuns();
+    await ctx.workspace.settled();
+
+    const html = render(ctx.workspace);
+    const t = text(html);
+    expect(html).toContain('data-testid="plan-version">v2<');
+    expect(t).toContain("Revised after observation No package.json; Cargo.toml holds the version");
+    expect(t).toMatch(/Evidence obs_/);
+    expect(t).toContain("01 Read Cargo.toml");
+    expect(html).toContain('data-testid="previous-plan"');
+    expect(t).toContain("Plan v1 · superseded");
+    expect(html).toMatch(/data-status="FAILED".*Read package\.json.*Invalidated by observations/s);
+    expect(html).toMatch(/data-status="SUPERSEDED"/);
+    expect(t).toContain("Replan requested · plan v1 package.json does not exist");
+    expect(t).toContain("Replanned · v1 → v2 1 new step · No package.json; Cargo.toml holds the version");
+    // The failure that triggered it is shown as an observation.
+    expect(t).toContain("Failed: PATH_NOT_FOUND");
+    expect(t).toContain("Verification Passed");
+  });
+
+  it("shows a task that is replanning as such", async () => {
+    const ctx = await connectedWorkspace();
+    const { project } = makeWorkspaceDir(ctx.rt, {});
+    ctx.ollama.script(
+      { expect: "PLAN", reply: plan([{ title: "Read package.json", tools: ["filesystem.read_text_file"] }], ["x"]) },
+      { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "package.json" }) },
+      { expect: "DECIDE", reply: (c) => requestReplan("package.json does not exist", [c.prompt.match(/observation (obs_[0-9A-Z]{26})/)![1]!]) },
+      { expect: "REPLAN", reply: { unreachable: true } },
+    );
+    const task = await ctx.client.request("task.create", { objective: "Version?", projectId: project.id });
+    await ctx.workspace.select(task.id);
+    await ctx.settleRuns();
+    await ctx.workspace.settled();
+    // The replan request is persisted; show the task as it stood when the request was made.
+    const { detail, events } = ctx.workspace.getState();
+    const replanning = { ...detail!, task: { ...detail!.task, status: "PLANNING" as const, statusReason: { code: "REPLANNING", message: "package.json does not exist" } } };
+    expect(phaseOf(replanning)).toMatchObject({ label: "Replanning", doing: "Revising plan v1: package.json does not exist" });
+    expect(text(renderToStaticMarkup(<TaskView detail={replanning} events={events} now={Date.now()} actions={actions} />))).toContain("Replan requested · plan v1");
   });
 
   it("shows artifacts the task produced", async () => {

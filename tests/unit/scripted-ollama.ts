@@ -5,7 +5,7 @@
  * so tests can assert what MORROW actually sent to the model.
  */
 
-export type Purpose = "PLAN" | "DECIDE" | "COMPOSE" | "VERIFY";
+export type Purpose = "PLAN" | "REPLAN" | "DECIDE" | "COMPOSE" | "VERIFY";
 
 export interface ChatCall {
   readonly purpose: Purpose;
@@ -23,6 +23,7 @@ export interface ScriptEntry {
 
 export function classify(prompt: string): Purpose {
   if (prompt.includes("Produce a plan as JSON")) return "PLAN";
+  if (prompt.includes("Propose a revised plan as JSON")) return "REPLAN";
   if (prompt.includes("Decide the single next action")) return "DECIDE";
   if (prompt.includes("Write the final result")) return "COMPOSE";
   if (prompt.includes("SUCCESS CRITERIA")) return "VERIFY";
@@ -99,6 +100,27 @@ export const plan = (steps: Array<{ title: string; tools?: string[] }>, successC
 export const callTool = (toolId: string, input: object, note = "calling tool") => ({ action: "call_tool", toolId, input, note });
 export const completeStep = (note = "done") => ({ action: "complete_step", toolId: "", input: {}, note });
 export const cannotProceed = (note: string) => ({ action: "cannot_proceed", toolId: "", input: {}, note });
+export const requestReplan = (note: string, observationIds: string[]) => ({ action: "replan", toolId: "", input: {}, note, observationIds });
+
+/** A replan proposal. Steps are numbered by position in the current plan. */
+export const replanProposal = (p: {
+  reason: string;
+  steps: Array<{ title: string; tools?: string[] }>;
+  evidence: string[];
+  affectedSteps?: number[];
+  keepSteps?: number[];
+  successCriteria?: string[];
+  replanRequired?: boolean;
+}) => ({
+  replanRequired: p.replanRequired ?? true,
+  reason: p.reason,
+  affectedSteps: p.affectedSteps ?? [],
+  keepSteps: p.keepSteps ?? [],
+  evidenceObservationIds: p.evidence,
+  summary: "Revised plan",
+  steps: p.steps.map((s) => ({ title: s.title, purpose: s.title, tools: s.tools ?? [] })),
+  successCriteria: p.successCriteria ?? ["The version is reported"],
+});
 
 /** Compose an answer citing every observation id visible in the prompt. */
 export const composeCitingAll = (answer: string) => (call: ChatCall) => ({

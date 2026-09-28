@@ -70,7 +70,43 @@ export const EVENT_PAYLOADS = {
     modelId: ModelIdSchema,
     steps: z.array(PlanStepSummary),
   }),
-  PLAN_UPDATED: z.object({ planId: PlanIdSchema, reason: z.string(), steps: z.array(PlanStepSummary) }),
+  /** Execution showed the current plan cannot achieve the objective as written. */
+  PLAN_REPLAN_REQUESTED: z.object({
+    planId: PlanIdSchema,
+    planVersion: z.number().int().positive(),
+    reason: z.string(),
+    /** Validated by the runtime: every id is an observation of this task. */
+    observationIds: z.array(ObservationIdSchema),
+    stepId: TaskStepIdSchema.nullable(),
+    attempt: z.number().int().positive(),
+  }),
+  /**
+   * A replan produced a new plan version that replaced the previous one. (This is the
+   * catalogue's original PLAN_UPDATED type, given its full payload when replanning
+   * was implemented; it had never been emitted before.)
+   */
+  PLAN_UPDATED: z.object({
+    previousPlanId: PlanIdSchema,
+    previousVersion: z.number().int().positive(),
+    planId: PlanIdSchema,
+    planVersion: z.number().int().positive(),
+    reason: z.string(),
+    observationIds: z.array(ObservationIdSchema),
+    keptStepIds: z.array(TaskStepIdSchema),
+    supersededStepIds: z.array(TaskStepIdSchema),
+    failedStepIds: z.array(TaskStepIdSchema),
+    summary: z.string(),
+    successCriteria: z.array(z.string()),
+    modelId: ModelIdSchema,
+    steps: z.array(PlanStepSummary),
+  }),
+  /** A replan was requested but not adopted; the current plan stays in force. */
+  PLAN_REPLAN_REJECTED: z.object({
+    planId: PlanIdSchema,
+    planVersion: z.number().int().positive(),
+    reason: z.string(),
+    rejectedBy: z.enum(["MODEL", "RUNTIME"]),
+  }),
 
   // ── Model calls (operational metadata only — never prompts or model reasoning) ──
   MODEL_INVOKED: z.object({

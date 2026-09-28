@@ -10,21 +10,15 @@ import {
   ModelPurposeSchema,
   ObservationSchema,
   PermissionRequestSchema,
-  PlanIdSchema,
+  PlanSchema,
   ProjectSchema,
   TaskSchema,
   TaskStepSchema,
   ToolExecutionSchema,
 } from "@morrow/schemas";
 
-/** The operational plan: what the planner committed to (never its reasoning). */
-export const TaskPlanSchema = z.object({
-  planId: PlanIdSchema,
-  summary: z.string(),
-  successCriteria: z.array(z.string()),
-  modelId: ModelIdSchema,
-  createdAt: z.number().int(),
-});
+/** The operational plan in force: what the planner committed to (never its reasoning). */
+export const TaskPlanSchema = PlanSchema;
 export type TaskPlan = z.infer<typeof TaskPlanSchema>;
 
 /** A model that did work on this task, with the provider that served it. */
@@ -43,11 +37,15 @@ export type TaskModel = z.infer<typeof TaskModelSchema>;
 /**
  * Everything MORROW has persisted about one task, assembled by the runtime from
  * its own tables. The UI renders this; it does not reconstruct it.
+ *
+ * `plan` is the active version; `plans` is every version, oldest first. `steps`
+ * holds the steps of all versions (each tagged with its planId).
  */
 export const TaskDetailSchema = z.object({
   task: TaskSchema,
   project: ProjectSchema.nullable(),
   plan: TaskPlanSchema.nullable(),
+  plans: z.array(TaskPlanSchema),
   steps: z.array(TaskStepSchema),
   executions: z.array(ToolExecutionSchema),
   permissionRequests: z.array(PermissionRequestSchema),

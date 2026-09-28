@@ -1,7 +1,7 @@
 import { MorrowError, newId, toErrorShape, type Clock, type Id } from "@morrow/shared";
 import type { EventActor, EventLog, EventRecorder } from "@morrow/events";
-import type { Observation, StatusReason, Task, TaskResult, TaskStatus, TaskStep } from "@morrow/schemas";
-import type { ObservationRepository, TaskStepRepository, ToolExecutionRepository } from "@morrow/database";
+import type { Observation, Plan, StatusReason, Task, TaskResult, TaskStatus, TaskStep } from "@morrow/schemas";
+import type { ObservationRepository, PlanRepository, TaskStepRepository, ToolExecutionRepository } from "@morrow/database";
 import type { PermissionRequests } from "@morrow/permissions";
 import type { MemoryService } from "@morrow/memory";
 import type { ContextBuilder } from "../context";
@@ -21,9 +21,11 @@ export interface AgentLimits {
   readonly maxActionsPerStep: number;
   /** Tool calls allowed across the whole task. */
   readonly maxToolCallsPerTask: number;
+  /** Replan requests allowed per task before it fails as unable to converge. */
+  readonly maxReplans: number;
 }
 
-export const DEFAULT_LIMITS: AgentLimits = { maxActionsPerStep: 6, maxToolCallsPerTask: 24 };
+export const DEFAULT_LIMITS: AgentLimits = { maxActionsPerStep: 6, maxToolCallsPerTask: 24, maxReplans: 3 };
 
 /** Reasons a WAITING task can be resumed once a model becomes available. */
 const MODEL_WAIT_CODES = new Set(["NO_MODEL_AVAILABLE", "MODEL_UNAVAILABLE", "PLANNER_NOT_IMPLEMENTED"]);
@@ -31,6 +33,7 @@ const MODEL_WAIT_CODES = new Set(["NO_MODEL_AVAILABLE", "MODEL_UNAVAILABLE", "PL
 export interface OrchestratorDeps {
   readonly tasks: TaskService;
   readonly steps: TaskStepRepository;
+  readonly plans: PlanRepository;
   readonly executions: ToolExecutionRepository;
   readonly observations: ObservationRepository;
   readonly eventLog: EventLog;
@@ -48,10 +51,16 @@ export interface OrchestratorDeps {
   readonly log?: (message: string) => void;
 }
 
-interface PlanRecord {
-  readonly planId: Id<"plan">;
-  readonly summary: string;
-  readonly successCriteria: readonly string[];
+/** The plan in force: its version record and its steps (own + kept from earlier versions). */
+interface CurrentPlan {
+  readonly plan: Plan;
+  readonly steps: TaskStep[];
+}
+
+interface ReplanRequest {
+  readonly reason: string;
+  readonly observationIds: readonly string[];
+  readonly stepId: Id<"taskStep"> | null;
 }
 
 /** Thrown to unwind a run that was halted (pause, cancel, shutdown). Never recorded as a failure. */
@@ -115,7 +124,8 @@ export class Orchestrator {
     for (const task of this.deps.tasks.list({ statuses: ["WAITING"], limit: 100 })) {
       if (!task.statusReason || !MODEL_WAIT_CODES.has(task.statusReason.code)) continue;
       const hasPlan = this.deps.steps.listByTask(task.id).length > 0;
-      this.deps.tasks.transition({ taskId: task.id, to: hasPlan ? "EXECUTING" : "PLANNING", actor: AGENT });
+      const resumeTo = hasPlan && !this.pendingReplan(task.id) ? "EXECUTING" : "PLANNING";
+      this.deps.tasks.transition({ taskId: task.id, to: resumeTo, actor: AGENT });
       runs.push(this.run(task.id));
     }
     return runs;
@@ -198,6 +208,9 @@ export class Orchestrator {
 
   private async planPhase(task: Task, signal: AbortSignal): Promise<void> {
     if (this.deps.steps.listByTask(task.id).length > 0) {
+      // Already planned: either a replan is pending, or we are resuming into execution.
+      const pending = this.pendingReplan(task.id);
+      if (pending) return this.replanPhase(task, pending, signal);
       this.move(task.id, "EXECUTING");
       return;
     }
@@ -222,6 +235,21 @@ export class Orchestrator {
       updatedAt: now,
     }));
     this.deps.recorder.transact((emit) => {
+      this.deps.plans.insert({
+        id: planId,
+        taskId: task.id,
+        version: 1,
+        previousPlanId: null,
+        status: "ACTIVE",
+        summary: planned.plan.summary,
+        successCriteria: planned.plan.successCriteria,
+        keptStepIds: [],
+        reason: null,
+        triggerObservationIds: [],
+        modelId: planned.model.id,
+        createdAt: now,
+        supersededAt: null,
+      });
       for (const step of steps) this.deps.steps.insert(step);
       emit({
         type: "PLAN_CREATED",
@@ -241,7 +269,8 @@ export class Orchestrator {
   }
 
   private async executePhase(task: Task, signal: AbortSignal): Promise<void> {
-    const steps = this.deps.steps.listByTask(task.id);
+    const current = this.currentPlan(task.id);
+    const steps = current.steps;
     let step = steps.find((s) => s.status === "PENDING" || s.status === "RUNNING");
     if (!step) {
       this.move(task.id, "VERIFYING");
@@ -261,9 +290,14 @@ export class Orchestrator {
     }
 
     const context = await this.deps.context.build(task);
-    const plan = this.loadPlan(task.id);
     const history = this.history(task.id);
-    const decided = await this.deps.decider.decide(context, { summary: plan.summary, steps }, step, history, signal);
+    const decided = await this.deps.decider.decide(
+      context,
+      { summary: current.plan.summary, version: current.plan.version, steps: this.currentPlan(task.id).steps },
+      step,
+      history,
+      signal,
+    );
     if (!decided.ok) return this.onModelError(task.id, "EXECUTING", decided.error);
     const decision = decided.value;
 
@@ -274,6 +308,14 @@ export class Orchestrator {
     if (decision.kind === "cannot_proceed") {
       this.updateStep(step, { status: "FAILED", outcome: decision.reason });
       this.move(task.id, "FAILED", { code: "CANNOT_PROCEED", message: decision.reason });
+      return;
+    }
+    if (decision.kind === "replan") {
+      this.requestReplan(task, current.plan, step, {
+        reason: decision.reason,
+        observationIds: decision.observationIds,
+        stepId: step.id,
+      });
       return;
     }
 
@@ -316,8 +358,7 @@ export class Orchestrator {
 
   private async verifyPhase(task: Task, signal: AbortSignal): Promise<void> {
     const context = await this.deps.context.build(task);
-    const plan = this.loadPlan(task.id);
-    const steps = this.deps.steps.listByTask(task.id);
+    const { plan, steps } = this.currentPlan(task.id);
     const history = this.history(task.id);
     const observations = this.deps.observations.listByTask(task.id);
     const known = new Set(observations.map((o) => o.id as string));
@@ -406,20 +447,187 @@ export class Orchestrator {
   }
 
   private updateStep(step: TaskStep, change: Partial<TaskStep>): TaskStep {
+    // A step object held across an await can be stale: if the task ended meanwhile (e.g. it
+    // was cancelled during a tool call), TaskService has closed the step; don't reopen it.
+    if (isTerminal(this.deps.tasks.get(step.taskId).status)) throw new Halted();
     const next = { ...step, ...change, updatedAt: this.deps.clock.now() };
     this.deps.steps.update(next);
     return next;
   }
 
-  /** The plan's summary and criteria are recorded in the PLAN_CREATED event. */
-  private loadPlan(taskId: Id<"task">): PlanRecord {
-    const event = this.deps.eventLog.list({ taskId, types: ["PLAN_CREATED"] }).at(-1);
-    if (!event || event.type !== "PLAN_CREATED") throw new MorrowError("PLAN_MISSING", "Task has no recorded plan");
-    return {
-      planId: event.payload.planId,
-      summary: event.payload.summary,
-      successCriteria: event.payload.successCriteria,
-    };
+  // ── Plan versions and replanning ────────────────────────────────
+
+  /** The active plan version and its steps (its own, plus completed steps it kept). */
+  private currentPlan(taskId: Id<"task">): CurrentPlan {
+    const plan = this.deps.plans.active(taskId);
+    if (!plan) throw new MorrowError("PLAN_MISSING", "Task has no active plan");
+    const kept = new Set<string>(plan.keptStepIds);
+    const steps = this.deps.steps.listByTask(taskId).filter((s) => s.planId === plan.id || kept.has(s.id));
+    return { plan, steps };
+  }
+
+  /** A replan request that has not yet been resolved (replanned or rejected), if any. */
+  private pendingReplan(taskId: Id<"task">): ReplanRequest | null {
+    const last = this.deps.eventLog
+      .list({ taskId, types: ["PLAN_REPLAN_REQUESTED", "PLAN_UPDATED", "PLAN_REPLAN_REJECTED"], limit: 1000 })
+      .at(-1);
+    if (last?.type !== "PLAN_REPLAN_REQUESTED") return null;
+    return { reason: last.payload.reason, observationIds: last.payload.observationIds, stepId: last.payload.stepId };
+  }
+
+  /**
+   * Execution found the plan invalid. Record the request and move to PLANNING, where
+   * the planner proposes a revision — or fail if the task keeps failing to converge.
+   */
+  private requestReplan(task: Task, plan: Plan, step: TaskStep, request: ReplanRequest): void {
+    const attempts = this.deps.eventLog.list({ taskId: task.id, types: ["PLAN_REPLAN_REQUESTED"], limit: 1000 }).length;
+    if (attempts >= this.limits.maxReplans) {
+      this.updateStep(step, { status: "FAILED", outcome: request.reason });
+      this.move(task.id, "FAILED", {
+        code: "REPLAN_LIMIT_REACHED",
+        message: `MORROW could not converge on a workable plan after ${attempts} replan attempt(s). Last reason: ${request.reason}`,
+      });
+      return;
+    }
+    this.deps.recorder.transact((emit) => {
+      emit({
+        type: "PLAN_REPLAN_REQUESTED",
+        actor: AGENT,
+        taskId: task.id,
+        projectId: task.projectId,
+        payload: {
+          planId: plan.id,
+          planVersion: plan.version,
+          reason: request.reason,
+          observationIds: request.observationIds as Observation["id"][],
+          stepId: request.stepId,
+          attempt: attempts + 1,
+        },
+      });
+      this.deps.tasks.transition({
+        taskId: task.id,
+        to: "PLANNING",
+        actor: AGENT,
+        reason: { code: "REPLANNING", message: request.reason },
+      });
+    });
+  }
+
+  /**
+   * Ask the planner for a revision and, if it proposes one, adopt it as a new plan
+   * version. The model only proposes; the runtime validates and applies. Nothing of
+   * the previous version is deleted: it is superseded, and its unfinished steps are
+   * marked as failed (the step that revealed the problem) or superseded.
+   */
+  private async replanPhase(task: Task, request: ReplanRequest, signal: AbortSignal): Promise<void> {
+    const context = await this.deps.context.build(task);
+    const { plan, steps } = this.currentPlan(task.id);
+    const history = this.history(task.id);
+    const proposed = await this.deps.planner.replan(
+      context,
+      { plan, steps, history, request: { reason: request.reason, observationIds: request.observationIds } },
+      signal,
+    );
+    if (!proposed.ok) return this.onModelError(task.id, "PLANNING", proposed.error);
+    const { proposal, model } = proposed;
+
+    if (!proposal.replanRequired) {
+      this.deps.recorder.transact((emit) => {
+        emit({
+          type: "PLAN_REPLAN_REJECTED",
+          actor: AGENT,
+          taskId: task.id,
+          projectId: task.projectId,
+          payload: { planId: plan.id, planVersion: plan.version, reason: proposal.reason, rejectedBy: "MODEL" },
+        });
+        this.deps.tasks.transition({
+          taskId: task.id,
+          to: "EXECUTING",
+          actor: AGENT,
+          reason: { code: "PLAN_KEPT", message: `Plan v${plan.version} still holds: ${proposal.reason}` },
+        });
+      });
+      return;
+    }
+
+    const now = this.deps.clock.now();
+    const planId = newId("plan", now);
+    const version = plan.version + 1;
+    const keptStepIds = [...new Set(proposal.keepSteps.map((n) => steps[n - 1]!.id))];
+    const unfinished = steps.filter((s) => s.status === "PENDING" || s.status === "RUNNING");
+    const failedStepIds = unfinished.filter((s) => s.id === request.stepId).map((s) => s.id);
+    const supersededStepIds = unfinished.filter((s) => s.id !== request.stepId).map((s) => s.id);
+    const evidence = [...new Set([...request.observationIds, ...proposal.evidenceObservationIds])] as Observation["id"][];
+    const firstOrdinal = Math.max(-1, ...this.deps.steps.listByTask(task.id).map((s) => s.ordinal)) + 1;
+    const newSteps: TaskStep[] = proposal.steps.map((s, i) => ({
+      id: newId("taskStep", now),
+      taskId: task.id,
+      planId,
+      ordinal: firstOrdinal + i,
+      title: s.title,
+      description: s.purpose || null,
+      status: "PENDING",
+      expectedToolIds: s.tools,
+      outcome: null,
+      toolExecutionId: null,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    this.deps.recorder.transact((emit) => {
+      for (const s of unfinished) {
+        this.updateStep(
+          s,
+          failedStepIds.includes(s.id)
+            ? { status: "FAILED", outcome: `Invalidated by observations: ${proposal.reason}` }
+            : { status: "SUPERSEDED", outcome: `Superseded by plan v${version}` },
+        );
+      }
+      this.deps.plans.markSuperseded(plan.id, now);
+      this.deps.plans.insert({
+        id: planId,
+        taskId: task.id,
+        version,
+        previousPlanId: plan.id,
+        status: "ACTIVE",
+        summary: proposal.summary,
+        successCriteria: proposal.successCriteria,
+        keptStepIds,
+        reason: proposal.reason,
+        triggerObservationIds: evidence,
+        modelId: model.id,
+        createdAt: now,
+        supersededAt: null,
+      });
+      for (const s of newSteps) this.deps.steps.insert(s);
+      emit({
+        type: "PLAN_UPDATED",
+        actor: AGENT,
+        taskId: task.id,
+        projectId: task.projectId,
+        payload: {
+          previousPlanId: plan.id,
+          previousVersion: plan.version,
+          planId,
+          planVersion: version,
+          reason: proposal.reason,
+          observationIds: evidence,
+          keptStepIds,
+          supersededStepIds,
+          failedStepIds,
+          summary: proposal.summary,
+          successCriteria: proposal.successCriteria,
+          modelId: model.id,
+          steps: newSteps.map((st) => ({ stepId: st.id, ordinal: st.ordinal, title: st.title })),
+        },
+      });
+      this.deps.tasks.transition({
+        taskId: task.id,
+        to: "EXECUTING",
+        actor: AGENT,
+        reason: { code: "REPLANNED", message: `Continuing under plan v${version}` },
+      });
+    });
   }
 
   private history(taskId: Id<"task">): StepHistoryEntry[] {

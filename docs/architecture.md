@@ -90,10 +90,12 @@ and Vitest compile them directly, so there is no per-package build step.
 USER INTENT ─ task.create ─▶ TASK (IDLE)
   PLANNING     ContextBuilder: objective, project, usable tools, active memories, platform/time
                ModelGateway(PLAN) → ModelPlanner → {summary, steps[], successCriteria[]}
-               steps → task_steps; summary/criteria/model → PLAN_CREATED
-  EXECUTING    per step: ModelGateway(DECIDE) → ActionDecider →
+               plan version 1 → plans; steps → task_steps; PLAN_CREATED
+               (or, with a replan pending: ModelPlanner.replan → new plan version)
+  EXECUTING    per step of the current plan version: ModelGateway(DECIDE) → ActionDecider →
                  call_tool      → StepExecutor → ToolRuntime → permission gate → tool → observation
                  complete_step  → step COMPLETED (outcome recorded)
+                 replan         → PLAN_REPLAN_REQUESTED → PLANNING (see Dynamic replanning)
                  cannot_proceed → step FAILED → task FAILED (CANNOT_PROCEED)
   OBSERVING    → EXECUTING (the decider sees every result, success or failure)
   RECOVERING   after a denial/failure: decideRecovery → back to EXECUTING, or FAILED
@@ -107,7 +109,7 @@ USER INTENT ─ task.create ─▶ TASK (IDLE)
 ```
 
 - **Durable.** Each iteration reads the task's status and advances one phase. The
-  plan (task_steps + PLAN_CREATED), tool executions and observations are all
+  plan versions (plans + task_steps), tool executions and observations are all
   persisted, so a halted run — pause, cancel, runtime shutdown — continues later from
   the database. A resumed task never re-plans.
 - **Halting.** `pause`, `cancel` and `shutdown` abort the run's signal. That cancels
@@ -119,6 +121,51 @@ USER INTENT ─ task.create ─▶ TASK (IDLE)
 - **Model unavailable.** No model, or a provider that stops responding during planning
   or execution, moves the task to `WAITING` (`NO_MODEL_AVAILABLE` / `MODEL_UNAVAILABLE`).
   `models.refresh` and startup resume those tasks once a model is available.
+
+### Dynamic replanning
+
+MORROW does not keep following a plan that reality has invalidated. Replanning
+happens inside the same loop, on the same task. Nothing about the task restarts, and
+nothing in its history is removed.
+
+```
+EXECUTING ─ decider sees the latest results (including failures, which are observations)
+   ├─ plan still fits → call_tool / complete_step            (no replan)
+   └─ plan invalidated → action "replan", citing observation ids
+        runtime validates the ids exist · checks the replan limit
+        PLAN_REPLAN_REQUESTED  ·  EXECUTING → PLANNING (reason REPLANNING)
+PLANNING ─ open replan request → ModelPlanner.replan → ReplanProposal (Zod)
+        runtime validates: evidence ids are real, affected/kept step positions exist,
+        kept steps are completed, tools exist → one correction attempt, else FAILED
+   ├─ replanRequired: false → PLAN_REPLAN_REJECTED → EXECUTING (plan kept)
+   └─ replanRequired: true  → new plan version (one transaction):
+        previous version SUPERSEDED · triggering step FAILED · other unfinished steps SUPERSEDED
+        new steps inserted · kept completed steps referenced · PLAN_UPDATED
+        PLANNING → EXECUTING (reason REPLANNED) under the new version
+```
+
+- **Plan model.** The `plans` table holds each version: id, version number, previous
+  version, status (ACTIVE or SUPERSEDED), summary, criteria, kept step ids, reason,
+  trigger observations, model and timestamps. Each `task_steps.plan_id` points at the
+  version that created the step. The current plan is the active version's own steps
+  plus the completed steps it keeps. What MORROW originally intended (v1) and what it
+  decided after observing reality (v2, …) both remain queryable.
+- **The model proposes; the runtime disposes.** The model never writes state. It emits a
+  structured proposal, and the runtime validates it and applies it itself.
+- **Evidence.** Replan requests and proposals may only cite observations of the task.
+  Failed tool calls (status FAILED) are recorded as observations for exactly this
+  reason: "package.json does not exist" is evidence. Permission denials and
+  cancellations are decisions, not observations, so they create none.
+- **Bounds.** At most `maxReplans` replan requests per task (default 3, configurable
+  through `AgentLimits`). Beyond that the task fails with `REPLAN_LIMIT_REACHED`, and the
+  full history stays intact.
+- **Restart.** An open request is detected from the event log: a
+  `PLAN_REPLAN_REQUESTED` with no later `PLAN_UPDATED` or `PLAN_REPLAN_REJECTED`. A task
+  interrupted mid-replan therefore resumes into the replan. A task that had already
+  replanned resumes under its active version without planning again.
+- **Verification** checks the current plan version's steps and success criteria.
+  Superseded or invalidated steps of earlier versions don't fail verification.
+- **Memory.** A replan never creates memory. The existing completion-time proposal is unchanged.
 
 ### Model gateway
 
@@ -220,7 +267,8 @@ log), `schemaVersion`, `occurredAt`, `actor {kind: USER|AGENT|SYSTEM|TOOL, id}`,
 `taskId`, `projectId`, `correlationId` (e.g. a tool execution), `causationId`, `payload`.
 
 Types: `TASK_CREATED, TASK_STARTED, TASK_STATE_CHANGED, TASK_PAUSED, TASK_RESUMED,
-TASK_CANCELLED, TASK_COMPLETED, TASK_FAILED, PLAN_CREATED, PLAN_UPDATED,
+TASK_CANCELLED, TASK_COMPLETED, TASK_FAILED, PLAN_CREATED, PLAN_REPLAN_REQUESTED,
+PLAN_UPDATED (a replan adopted), PLAN_REPLAN_REJECTED,
 MODEL_INVOKED, MODEL_RESPONDED, TOOL_REQUESTED, TOOL_PERMISSION_REQUIRED, PERMISSION_RESOLVED, TOOL_STARTED,
 TOOL_OUTPUT, TOOL_COMPLETED, TOOL_FAILED, OBSERVATION_CREATED, VERIFICATION_STARTED,
 VERIFICATION_PASSED, VERIFICATION_FAILED, MEMORY_PROPOSED, MEMORY_CREATED,
@@ -239,7 +287,7 @@ append-only; application code never updates or deletes rows.
 |---|---|
 | IDLE | PLANNING, CANCELLED |
 | PLANNING | EXECUTING, WAITING, AWAITING_PERMISSION, FAILED, PAUSED, CANCELLED |
-| EXECUTING | OBSERVING, AWAITING_PERMISSION, WAITING, VERIFYING, RECOVERING, FAILED, PAUSED, CANCELLED |
+| EXECUTING | OBSERVING, AWAITING_PERMISSION, WAITING, VERIFYING, RECOVERING, PLANNING (replan), FAILED, PAUSED, CANCELLED |
 | OBSERVING | EXECUTING, PLANNING, VERIFYING, RECOVERING, FAILED, PAUSED, CANCELLED |
 | WAITING | PLANNING, EXECUTING, FAILED, PAUSED, CANCELLED |
 | AWAITING_PERMISSION | EXECUTING, PLANNING, RECOVERING, FAILED, PAUSED, CANCELLED |
@@ -315,7 +363,7 @@ SQLite through Drizzle ORM (`database/`), with better-sqlite3 as the driver. The
 lives at `<OS app-data>/app.morrow.desktop/morrow.sqlite`. It uses WAL mode, foreign
 keys, and synchronous transactions. In-memory databases are refused.
 
-Tables: `projects, tasks, task_steps, events, observations, memories,
+Tables: `projects, tasks, plans, task_steps, events, observations, memories,
 memory_sources, memory_relations, memory_revisions, tools, tool_permissions,
 tool_executions, permissions, permission_requests, models, model_providers,
 model_usage, artifacts, artifact_relations, research_sources, research_evidence,
@@ -397,7 +445,6 @@ Development therefore keeps using `node` from PATH and `agent/dist`.
 
 ## Not yet implemented (architecture reserved)
 
-- Plan revision mid-task (`PLAN_UPDATED`). Recovery currently continues the same plan.
 - Terminal, browser, git, development and cybersecurity tools.
 - Computer vision and computer control (reported UNAVAILABLE).
 - MCP runtime and connectors: schemas and tables only.

@@ -3,6 +3,7 @@ import { systemClock, type Clock, type Id } from "@morrow/shared";
 import { EventBus, EventRecorder } from "@morrow/events";
 import {
   ArtifactRepository,
+  PlanRepository,
   TaskStepRepository,
   MemoryRepository,
   ModelRepository,
@@ -68,6 +69,7 @@ export function createRuntime(config: RuntimeConfig) {
     projects: new ProjectRepository(db),
     tasks: new TaskRepository(db),
     taskSteps: new TaskStepRepository(db),
+    plans: new PlanRepository(db),
     artifacts: new ArtifactRepository(db),
     observations: new ObservationRepository(db),
     memory: new MemoryRepository(db),
@@ -107,7 +109,7 @@ export function createRuntime(config: RuntimeConfig) {
 
   const adapters = new Map<ModelAdapterKind, ModelProviderAdapter>([["OLLAMA", new OllamaAdapter(config.fetch)]]);
   const modelService = new ModelService(repos.models, adapters, noSecrets, clock);
-  const taskService = new TaskService(repos.tasks, recorder, clock);
+  const taskService = new TaskService(repos.tasks, repos.taskSteps, recorder, clock);
   const memoryService = new MemoryService(repos.memory, recorder, clock);
   const stepExecutor = new StepExecutor(taskService, toolRuntime);
   const gateway = new ModelGateway(modelService, recorder, repos.settings, clock, config.gateway);
@@ -115,6 +117,7 @@ export function createRuntime(config: RuntimeConfig) {
   const orchestrator = new Orchestrator({
     tasks: taskService,
     steps: repos.taskSteps,
+    plans: repos.plans,
     executions: repos.toolExecutions,
     observations: repos.observations,
     eventLog,

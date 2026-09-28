@@ -1,7 +1,7 @@
 import { MorrowError, newId, type Clock, type Id } from "@morrow/shared";
 import type { EventActor, EventRecorder, MorrowEvent } from "@morrow/events";
 import type { StatusReason, Task, TaskResult, TaskStatus } from "@morrow/schemas";
-import type { TaskListQuery, TaskRepository } from "@morrow/database";
+import type { TaskListQuery, TaskRepository, TaskStepRepository } from "@morrow/database";
 import { canTransition, eventForTransition, isTerminal } from "./state-machine";
 
 export interface CreateTaskInput {
@@ -36,10 +36,13 @@ export function deriveTitle(objective: string): string {
  *  1. is validated against the state machine,
  *  2. is written with optimistic concurrency (stale writers fail),
  *  3. is recorded as an event in the same transaction.
+ * A task that ends also closes any step still RUNNING, in that same transaction, so no
+ * path to a terminal state (failure, cancellation, internal error) leaves phantom activity.
  */
 export class TaskService {
   constructor(
     private readonly tasks: TaskRepository,
+    private readonly steps: TaskStepRepository,
     private readonly recorder: EventRecorder,
     private readonly clock: Clock,
   ) {}
@@ -123,6 +126,7 @@ export class TaskService {
       if (!this.tasks.updateIfVersion(next, current.version)) {
         throw new MorrowError("TASK_CONFLICT", "Task was modified concurrently; retry with fresh state");
       }
+      if (isTerminal(to)) this.closeRunningSteps(next);
       const event = emit({
         type: eventForTransition(from, to),
         actor: input.actor,
@@ -133,6 +137,29 @@ export class TaskService {
       } as Parameters<typeof emit>[0]);
       return { task: next, event };
     });
+  }
+
+  /**
+   * A failed task's running step failed with it. A cancelled one was stopped, not failed,
+   * so it is SKIPPED. PENDING steps never started and stay PENDING.
+   */
+  private closeRunningSteps(task: Task): void {
+    const why = task.statusReason?.message;
+    const outcome =
+      task.status === "FAILED"
+        ? why ?? "The task failed"
+        : task.status === "CANCELLED"
+          ? `Stopped: the task was cancelled${why ? ` (${why})` : ""}`
+          : "Stopped: the task ended";
+    for (const step of this.steps.listByTask(task.id)) {
+      if (step.status !== "RUNNING") continue;
+      this.steps.update({
+        ...step,
+        status: task.status === "FAILED" ? "FAILED" : "SKIPPED",
+        outcome: outcome.slice(0, 500),
+        updatedAt: task.updatedAt,
+      });
+    }
   }
 
   pause(taskId: Id<"task">, actor: EventActor): Task {

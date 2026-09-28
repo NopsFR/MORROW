@@ -76,6 +76,12 @@ function describe(e) {
       return p.evidence.join(" | ");
     case "VERIFICATION_FAILED":
       return p.reasons.join(" | ");
+    case "PLAN_REPLAN_REQUESTED":
+      return `plan v${p.planVersion}: ${p.reason} (evidence: ${p.observationIds.join(", ") || "none"})`;
+    case "PLAN_UPDATED":
+      return `v${p.previousVersion} → v${p.planVersion}: ${p.reason}\n${p.steps.map((s, i) => `           ${i + 1}. ${s.title}`).join("\n")}\n           kept: ${p.keptStepIds.length}, superseded: ${p.supersededStepIds.length}, failed: ${p.failedStepIds.length}`;
+    case "PLAN_REPLAN_REJECTED":
+      return `plan v${p.planVersion} kept: ${p.reason}`;
     case "ARTIFACT_CREATED":
       return `${p.kind} ${p.uri}`;
     default:

@@ -65,15 +65,36 @@ pub fn resolve_paths(
     }
 }
 
+/// Removes the Windows extended-length prefix (`\\?\C:\...`, `\\?\UNC\server\...`) that
+/// Tauri's path resolver can return. Node.js cannot resolve its entry script from such a
+/// path (`EISDIR: lstat 'C:'`), so the bundled runtime would exit at startup. Other paths
+/// are returned unchanged.
+pub fn plain_path(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else { return path };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        // Only drive-letter paths are safe to shorten; leave e.g. volume GUID paths alone.
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            PathBuf::from(rest)
+        } else {
+            path
+        }
+    } else {
+        path
+    }
+}
+
 fn repo_root() -> PathBuf {
     // apps/desktop/src-tauri → repository root (only meaningful in development builds)
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..")
 }
 
 pub fn resolve(app: &AppHandle) -> Result<RuntimeLaunch, Box<dyn std::error::Error>> {
-    let data_dir = app.path().app_data_dir()?;
+    let data_dir = plain_path(app.path().app_data_dir()?);
     std::fs::create_dir_all(&data_dir)?;
-    let resource_dir = app.path().resource_dir().ok();
+    let resource_dir = app.path().resource_dir().ok().map(plain_path);
 
     let paths = resolve_paths(|k| std::env::var_os(k), resource_dir.as_deref(), &repo_root(), |p| p.exists());
     eprintln!("[morrow] agent runtime: {:?} ({})", paths.source, paths.script.display());
@@ -131,5 +152,18 @@ mod tests {
         let env = |k: &str| (k == "MORROW_NODE").then(|| OsString::from("/custom/node"));
         let paths = resolve_paths(env, None, Path::new("/repo"), |_| false);
         assert_eq!(paths.node, PathBuf::from("/custom/node"));
+    }
+
+    #[test]
+    fn extended_length_prefixes_are_removed() {
+        assert_eq!(
+            plain_path(PathBuf::from(r"\\?\C:\Program Files\MORROW")),
+            PathBuf::from(r"C:\Program Files\MORROW")
+        );
+        assert_eq!(plain_path(PathBuf::from(r"\\?\UNC\server\share\app")), PathBuf::from(r"\\server\share\app"));
+        assert_eq!(plain_path(PathBuf::from(r"C:\already\plain")), PathBuf::from(r"C:\already\plain"));
+        assert_eq!(plain_path(PathBuf::from("/app/resources")), PathBuf::from("/app/resources"));
+        let volume = PathBuf::from(r"\\?\Volume{1234}\dir");
+        assert_eq!(plain_path(volume.clone()), volume);
     }
 }

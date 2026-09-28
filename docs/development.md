@@ -75,6 +75,8 @@ node scripts/desktop-live-check.mjs --workspace <dir> --objective "<task>" [--ca
 ```bash
 # App running with WebView2 remote debugging (see above)
 node scripts/desktop-verify.mjs --workspace <dir> --objective "<task needing a tool>" --out <dir>
+# re-check an existing task and save a baseline:
+node scripts/desktop-verify.mjs --capture <dir>/snapshot.json --out <dir>
 # after restarting the app:
 node scripts/desktop-verify.mjs --compare <dir>/snapshot.json --out <dir>
 ```
@@ -83,8 +85,18 @@ It drives the UI as a user, answers permission decisions with "Allow once", capt
 screenshots at each phase, and cross-checks everything shown against the database
 (read-only): pending/resolved permission requests, the call's persisted purpose,
 timeline entries vs persisted events (by sequence), plan steps, criteria, observations,
-executions and the result. It then reloads the page (and, in compare mode, checks a
+executions and the result; for replanned tasks also the active plan version, the persisted replan reason, every earlier version with its step statuses, and that every replan cites real observations. It then reloads the page (and, in compare mode, checks a
 restarted app) to confirm the view is reconstructed identically.
+
+The events it requires follow what the task actually went through: verification events
+only if the task reached verification, and tool results only if a tool ran. A finished
+task must also leave no step running.
+
+- `--port <n>`: the WebView2 debugging port. The default is 9223; use a different one for
+  a release build.
+- `--cancel-at-permission`: at the first permission prompt, press the task's Cancel button
+  instead of answering. It checks that the open question is withdrawn, the running step is
+  recorded as stopped, and the tool call is cancelled without running.
 
 ## Resetting local state
 
@@ -119,6 +131,19 @@ pnpm package            # prepare:runtime + tauri build with the runtime as app 
 
 `pnpm dev` is unaffected: without a bundled runtime in the app's resources, the
 launcher uses `node` from PATH and `agent/dist`.
+
+To smoke-test a release build without the installer step:
+
+```bash
+pnpm prepare:runtime
+pnpm --filter @morrow/desktop tauri build --no-bundle --config src-tauri/tauri.bundle.conf.json
+```
+
+Then start `target/release/morrow-desktop.exe`. Its stderr names the runtime source
+(`Bundled (...)`), and the runtime child must be `target/release/runtime/node.exe`. The
+System view must show DATABASE READY. `scripts/desktop-verify.mjs --port <n>` also works
+against a release build started with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<n>`.
 
 ## Database changes
 
