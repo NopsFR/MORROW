@@ -82,6 +82,8 @@ export const plans = sqliteTable(
     status: text("status").notNull(),
     summary: text("summary").notNull(),
     successCriteria: text("success_criteria", { mode: "json" }).$type<string[]>().notNull(),
+    /** Grounded criteria (JSON array); NULL for plans created before grounded verification. */
+    criteria: text("criteria", { mode: "json" }).$type<unknown[]>(),
     keptStepIds: text("kept_step_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
     reason: text("reason"),
     triggerObservationIds: text("trigger_observation_ids", { mode: "json" }).$type<string[]>().notNull().default([]),

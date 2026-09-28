@@ -92,6 +92,14 @@ The events it requires follow what the task actually went through: verification 
 only if the task reached verification, and tool results only if a tool ran. A finished
 task must also leave no step running.
 
+For grounded criteria it also checks:
+- each criterion's basis is shown, and is found verbatim in the objective;
+- every evidence excerpt in the result is really in the observation it cites;
+- the shown verdicts and evidence equal the persisted ones.
+
+`scripts/live-agent-check.mjs` prints the grounded criteria, every rejected model output
+with MORROW's reason, and each verdict with its evidence and the model's assessment.
+
 - `--port <n>`: the WebView2 debugging port. The default is 9223; use a different one for
   a release build.
 - `--cancel-at-permission`: at the first permission prompt, press the task's Cancel button

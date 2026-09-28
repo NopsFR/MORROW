@@ -105,7 +105,7 @@ export class ModelGateway {
           break; // try the next model
         }
         const parsed = parseStructured(call.text, request.schema, request.validate);
-        this.recordResponse(model, request, parsed.ok ? "VALID" : "INVALID_OUTPUT", call);
+        this.recordResponse(model, request, parsed.ok ? "VALID" : "INVALID_OUTPUT", call, parsed.ok ? null : parsed.problem);
         if (parsed.ok) return { ok: true, value: parsed.value, model };
         if (attempt === this.attemptsPerModel) {
           return {
@@ -199,8 +199,9 @@ export class ModelGateway {
     request: StructuredRequest<T>,
     outcome: "VALID" | "INVALID_OUTPUT",
     call: { latencyMs: number; inputTokens: number | null; outputTokens: number | null },
+    problem: string | null,
   ): void {
-    this.emitResponded(model, request, outcome, call.latencyMs, call.inputTokens, call.outputTokens);
+    this.emitResponded(model, request, outcome, call.latencyMs, call.inputTokens, call.outputTokens, problem);
     this.models.recordUsage({
       id: newId("modelUsage", this.clock.now()),
       modelId: model.id,
@@ -221,12 +222,21 @@ export class ModelGateway {
     latencyMs: number,
     inputTokens: number | null,
     outputTokens: number | null,
+    problem: string | null = null,
   ): void {
     this.recorder.record({
       type: "MODEL_RESPONDED",
       actor: { kind: "AGENT", id: null },
       taskId: request.taskId,
-      payload: { modelId: model.id, purpose: request.purpose, outcome, latencyMs, inputTokens, outputTokens },
+      payload: {
+        modelId: model.id,
+        purpose: request.purpose,
+        outcome,
+        latencyMs,
+        inputTokens,
+        outputTokens,
+        ...(problem ? { problem: problem.slice(0, 1000) } : {}),
+      },
     });
   }
 }

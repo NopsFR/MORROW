@@ -3,6 +3,8 @@ import {
   ArtifactIdSchema,
   ArtifactKindSchema,
   CapabilitySchema,
+  CriterionIdSchema,
+  CriterionSchema,
   ErrorShapeSchema,
   JsonValueSchema,
   MemoryIdSchema,
@@ -23,6 +25,7 @@ import {
   TaskStepIdSchema,
   ToolExecutionIdSchema,
   ToolIdSchema,
+  VerificationOutcomeSchema,
   idSchema,
 } from "@morrow/schemas";
 
@@ -40,6 +43,13 @@ const PlanStepSummary = z.object({
 });
 
 const VerificationIdSchema = idSchema("verification");
+
+/**
+ * What prompted a replan: execution results contradicting the plan, or verification
+ * finding a success criterion that does not express the objective. Absent on events
+ * recorded before criteria could be revised (they were all EXECUTION).
+ */
+const ReplanTriggerSchema = z.enum(["EXECUTION", "VERIFICATION"]);
 
 /**
  * The single catalogue of MORROW event types and their payloads.
@@ -67,6 +77,8 @@ export const EVENT_PAYLOADS = {
     planId: PlanIdSchema,
     summary: z.string(),
     successCriteria: z.array(z.string()),
+    /** The grounded criteria the runtime accepted (absent before grounded verification). */
+    criteria: z.array(CriterionSchema).optional(),
     modelId: ModelIdSchema,
     steps: z.array(PlanStepSummary),
   }),
@@ -79,6 +91,9 @@ export const EVENT_PAYLOADS = {
     observationIds: z.array(ObservationIdSchema),
     stepId: TaskStepIdSchema.nullable(),
     attempt: z.number().int().positive(),
+    trigger: ReplanTriggerSchema.optional(),
+    /** For a VERIFICATION trigger: the criteria verification found invalid, and why. */
+    invalidCriteria: z.array(z.object({ criterionId: CriterionIdSchema, why: z.string() })).optional(),
   }),
   /**
    * A replan produced a new plan version that replaced the previous one. (This is the
@@ -97,6 +112,10 @@ export const EVENT_PAYLOADS = {
     failedStepIds: z.array(TaskStepIdSchema),
     summary: z.string(),
     successCriteria: z.array(z.string()),
+    criteria: z.array(CriterionSchema).optional(),
+    trigger: ReplanTriggerSchema.optional(),
+    /** Criteria replaced by this version (each new one has `revisionOf` set). */
+    revisedCriterionIds: z.array(CriterionIdSchema).optional(),
     modelId: ModelIdSchema,
     steps: z.array(PlanStepSummary),
   }),
@@ -122,6 +141,8 @@ export const EVENT_PAYLOADS = {
     latencyMs: z.number().int().nonnegative(),
     inputTokens: z.number().int().nonnegative().nullable(),
     outputTokens: z.number().int().nonnegative().nullable(),
+    /** For INVALID_OUTPUT: MORROW's own validation message (never model text or reasoning). */
+    problem: z.string().nullable().optional(),
   }),
 
   // ── Tools & permissions ───────────────────────────────────────────
@@ -173,8 +194,21 @@ export const EVENT_PAYLOADS = {
     summary: z.string(),
   }),
   VERIFICATION_STARTED: z.object({ verificationId: VerificationIdSchema, criteria: z.array(z.string()) }),
-  VERIFICATION_PASSED: z.object({ verificationId: VerificationIdSchema, evidence: z.array(z.string()) }),
-  VERIFICATION_FAILED: z.object({ verificationId: VerificationIdSchema, reasons: z.array(z.string()) }),
+  VERIFICATION_PASSED: z.object({
+    verificationId: VerificationIdSchema,
+    evidence: z.array(z.string()),
+    outcome: VerificationOutcomeSchema.optional(),
+  }),
+  /**
+   * `outcome` distinguishes a result that is demonstrably wrong (NOT_VERIFIED) from one the
+   * evidence does not show (INSUFFICIENT_EVIDENCE) and from criteria that do not express
+   * the objective (CRITERIA_INVALID). Absent on events recorded before grounded verification.
+   */
+  VERIFICATION_FAILED: z.object({
+    verificationId: VerificationIdSchema,
+    reasons: z.array(z.string()),
+    outcome: VerificationOutcomeSchema.optional(),
+  }),
 
   // ── Memory ────────────────────────────────────────────────────────
   MEMORY_PROPOSED: z.object({ memoryId: MemoryIdSchema, type: MemoryTypeSchema, origin: MemoryOriginSchema }),

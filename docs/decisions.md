@@ -298,7 +298,7 @@ Three things keep this universal:
 - The test helper checks every test runtime before it closes: no ended task has a RUNNING
   step, a PENDING permission request or an unfinished tool execution.
 
-### D54 — Known limitation: success criteria are not grounded (pre-existing, open)
+### D54 — Known limitation: success criteria are not grounded (superseded by D55–D61)
 The planner writes success criteria before anything has been observed, and nothing checks
 them against the objective. So the model can add assumptions the user never made, and
 verification then fails a correct answer against them.
@@ -315,3 +315,158 @@ verification then fails a correct answer against them.
   a design change. Criteria should be derived from the objective and validated against
   it, and verification should judge them against observations. That is the next
   milestone's scope.
+
+## Agent Core 2.2 — grounded verification
+
+The model still proposes criteria and verdicts. What changed is that the runtime now
+validates them, and verification rests on evidence MORROW can find itself. The model did
+not become smarter; the architecture got better at refusing what it cannot support.
+
+### D55 — Criteria are structured and grounded in the objective by the runtime
+A criterion is `{requirement, objectiveBasis, evidence, verifiableBy, required}`. Criteria
+are persisted per plan version in `plans.criteria`, added by migration 0004 (NULL for
+older plans). Before any proposed criterion becomes task state, `criteriaProblem`
+applies two structural rules, which hold in any domain:
+
+- **Basis.** `objectiveBasis` must be the user's own words, found verbatim in the
+  objective (case and spacing ignored).
+- **No introduced specifics.** The binding `requirement` may not introduce a specific
+  reference the objective does not contain. A specific reference is a quoted or
+  bracketed term, a path, a file or dotted name, a snake_case name, or a version-like
+  literal. Guesses about where the answer will be found belong in `evidence`, which is
+  only a hint.
+
+A violation goes through the gateway's single correction attempt. If the model still
+violates the rule, planning fails honestly with `INVALID_MODEL_OUTPUT` and nothing is
+stored. For D54's case, "…under the [tool.poetry] section" is rejected because it
+introduces `tool.poetry`. Live, qwen3:4b's "…in package.json" for "Find the project's
+package version." was rejected, and its correction was accepted. Nothing in the rules
+names a file type, a language or a model.
+
+**Limit.** Assumptions written in plain prose ("a license file is found") pass the
+structural rules. They are caught later: by the objective criterion (D56), by the
+composer's own account (D57), or by verification marking the criterion invalid (D59).
+
+### D56 — Every grounded plan also carries the objective itself as a criterion
+The runtime adds `The answer accomplishes the objective as stated: "<objective>"` as the
+first criterion (origin OBJECTIVE). It is required, it is never revised, and it must be
+shown by observations whenever the plan uses tools. Verification therefore always
+answers "was what the user asked actually accomplished?", not only "were the planner's
+sentences met?". A verdict that calls the objective itself "invalid" counts as
+insufficient evidence, never as grounds for revision. It costs one more verdict in the
+existing VERIFY call.
+
+### D57 — The composer states whether the answer accomplishes the objective
+The composition output adds `answersObjective`: FULLY, PARTIALLY or NOT_AT_ALL. Anything
+but FULLY fails the structural check "The answer says it accomplishes the objective", so
+an answer that says "cannot be determined" is never verified as done. This declaration
+can only block verification, never pass it.
+
+This was found live. A licence task was planned around a licence *file*. None existed
+(the licence is declared in pyproject.toml). The answer said it "cannot be determined",
+and the verifier judged the file criterion satisfied from the empty search results.
+Under D26 alone that was VERIFIED. With D56 and D57 in place, three repeat runs were all
+NOT_VERIFIED.
+
+### D58 — Direct evidence is an excerpt MORROW finds in the observation it cites
+Each verdict carries `evidence: [{observationId, excerpt}]` and an `explanation`.
+Evidence counts only if the observation belongs to this task and the excerpt is really in
+it. The comparison ignores presentation: it tries both the escaped and the unescaped
+reading, and ignores punctuation and spacing. Letters, digits, `.` and `-` must still
+appear in order, so "2.4.2" or "241" never match "2.4.1". An invented id or excerpt
+gets one correction attempt and is never repaired.
+
+`SATISFIED` counts only with at least one found excerpt. The one exception is a
+criterion verifiable from the answer alone when no tool produced any observation.
+Otherwise the verdict is recorded as `INSUFFICIENT_EVIDENCE`, with what the model
+claimed kept in `modelStatus`. Results store per-criterion verdicts with direct evidence
+and the model's assessment kept separate, and the UI labels them that way.
+
+The matcher was made tolerant of presentation after qwen3:4b quoted real text with
+JSON escaping removed. That tolerance never admits text that is not there.
+
+### D59 — Outcomes, and invalid criteria revised through the plan lifecycle
+The outcomes are VERIFIED, NOT_VERIFIED, INSUFFICIENT_EVIDENCE and CRITERIA_INVALID.
+They are persisted on the result and on `VERIFICATION_PASSED` / `VERIFICATION_FAILED`
+(optional `outcome`), and failed tasks carry the codes `VERIFICATION_FAILED`,
+`INSUFFICIENT_EVIDENCE` or `CRITERIA_INVALID`. Only required criteria decide; optional
+ones are recorded. A demonstrated failure outranks an invalid criterion, which outranks
+missing evidence.
+
+When a required criterion is judged invalid, the request goes through the 2.1 replan
+machinery:
+
+1. **Request.** `PLAN_REPLAN_REQUESTED` records `trigger: VERIFICATION` and, for each
+   invalid criterion, why (persisted, so a restart can carry it out). The task moves
+   VERIFYING → PLANNING.
+2. **Proposal.** The planner proposes replacements for exactly those criteria.
+3. **Validation.** The runtime checks each replacement: grounded (D55), covering the same
+   part of the objective, still required if the original was, and actually different.
+4. **New version.** The runtime records a plan version with `trigger: VERIFICATION`,
+   `revisedCriterionIds` and `revisionOf` links. It keeps every completed step, and the
+   old criteria stay in the superseded version.
+5. **Re-verification.** Verification runs again on the revised criteria.
+
+The whole cycle is bounded by `maxReplans`. When the limit is reached, or the plan
+predates D55, the task fails with `CRITERIA_INVALID` and is never waived.
+
+Execution replans (2.1) can no longer change criteria at all. The replan schema has no
+criteria field, and the runtime copies them unchanged. So v2 cannot quietly redefine
+success after a setback, which a 2.1 run did ("the version is 'unknown'").
+
+### D60 — What grounded verification does not do
+- **Prose assumptions.** It cannot detect every assumption written in plain prose (D55).
+  Those are left to verification, which a small model judges unevenly. Live, qwen3:4b
+  judged the objective criterion satisfied for a wrong licence answer. The task was still
+  not verified, because of D57 and the planner's criteria.
+- **Excerpt relevance.** It checks that an excerpt exists, not that it proves the claim (for the objective itself, D61 now traces the answer's finding to the evidence).
+  A real excerpt cited for the wrong claim is caught only by the model's own verdict.
+- **Revisions.** A revision could, in principle, replace a valid criterion that the
+  verifier wrongly called invalid. The replacement must still be grounded, required and
+  on the same part of the objective. Revisions are bounded and fully recorded.
+- **Memory.** Memory is unchanged. Only verified tasks propose memories, as before.
+
+### D61 — The objective is verified by tracing the answer's finding to the evidence
+Found live after D56/D57, and reproduced deterministically (test 6c). The answer was "No
+license file was found" for "Which license does this project use?". The verifier called the
+objective satisfied, quoting real excerpts of searches that found nothing. Every excerpt
+existed, so this was VERIFIED.
+
+A pure string rule cannot decide whether evidence *supports* a claim. But this failure
+has a structural signature: nothing the answer asserts appears in what the tools returned.
+So the objective's verdict now names the answer's **finding**, and the runtime traces it:
+
+- **Short.** It is at most 4 words: the value, name or fact itself. It is copied from the
+  answer, and an invented or overlong finding gets the single correction. Only the
+  objective's verdict is checked; findings on other verdicts are ignored.
+- **Traced word by word.** Every content word (3 or more letters or digits) must be in
+  the objective or in the **values** of the cited observations. Word order and phrasing
+  don't matter ("MIT license" is traced to `license = "MIT"`). JSON keys and MORROW's
+  summaries are not evidence.
+- **Grounded in the evidence.** At least one word must be in those values, not only in
+  the objective.
+
+Otherwise the objective criterion is INSUFFICIENT_EVIDENCE, with the untraced words in the
+note. The live case fails on "file". A write task ("Created hello.md") still verifies,
+because its finding, "hello.md", is in the write result.
+
+The same observation values (in order, without keys) are now also a haystack for
+excerpts. A failed call quoted as prompts render it ("PATH_NOT_FOUND: No such file…") is
+real content, and it had been rejected.
+
+**The boundary of 2.2.** Tests 6e and 6f pin these down:
+
+- **Coincidental words pass.** A finding word that also appears elsewhere in a cited
+  observation passes. For example, "file" matches a directory listing's `"kind": "file"`.
+- **Objective words pass.** A finding made of objective words that the evidence also
+  contains passes whatever the answer meant. The composer's own account (D57) is what
+  stops "could not find it" answers.
+- **True absence can't be verified.** "No license is declared" cannot be shown by an
+  excerpt, so it is honest uncertainty, not VERIFIED.
+- **Support itself is out of reach.** Deciding whether evidence supports a claim, beyond
+  these traces, needs semantic judgement. That belongs to a later milestone, not to
+  string rules.
+
+Live on qwen3:4b, the findings given were values ("2.4.1", "MIT license"). The correct
+answers that were still not verified failed on the planner's prose criteria (D60), not on
+this rule.

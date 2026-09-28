@@ -12,8 +12,11 @@ import {
   completeStep,
   composeCitingAll,
   plan,
+  quotedEvidence,
   replanProposal,
   requestReplan,
+  verdict,
+  verdicts,
   verdictsAllMet,
 } from "./scripted-ollama";
 import { connectedWorkspace, makeWorkspaceDir, nextEvent, workspaceReaches } from "./workspace-fixtures";
@@ -45,7 +48,7 @@ function text(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-const CRITERIA = ["The answer states the launch code from notes.txt"];
+const CRITERIA = ["The answer states the launch code"];
 
 async function readTask(options: { answer?: "ALLOW" | "DENY" } = {}) {
   const ctx = await connectedWorkspace();
@@ -177,10 +180,15 @@ describe("task view — rendered from real persisted state", () => {
     expect(t).toContain("Verification Passed");
     expect(t).toContain("Every planned step completed");
     expect(t).toContain("Checked by MORROW");
-    expect(t).toContain("Judged by the model; cited evidence checked by MORROW");
+    expect(t).toContain("Judged by the model; evidence checked by MORROW");
     const v = verification(workspace.getState().detail!, workspace.getState().events);
     expect(v.status).toBe("PASSED");
     expect(v.checks.every((c) => c.passed)).toBe(true);
+    // Direct evidence and the model's interpretation are shown apart.
+    const judged = v.checks.find((c) => c.judgedBy === "MODEL")!;
+    expect(judged.evidence[0]?.observationId).toBe(v.citedObservationIds[0]);
+    expect(t).toContain("Model's assessment");
+    expect(t).toContain(`From the objective: “${judged.basis}”`);
     expect(v.citedObservationIds).toHaveLength(1);
     expect(t).toContain(v.citedObservationIds[0]);
   });
@@ -252,8 +260,8 @@ describe("task view — rendered from real persisted state", () => {
       { expect: "PLAN", reply: plan([{ title: "Read notes", tools: ["filesystem.read_text_file"] }], CRITERIA) },
       { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },
       { expect: "DECIDE", reply: completeStep() },
-      { expect: "COMPOSE", reply: { answer: "The launch code is 9999.", observationIds: [] } },
-      { expect: "VERIFY", reply: { verdicts: [{ criterion: CRITERIA[0], met: false, observationIds: [], explanation: "The observation shows 4471, not 9999" }] } },
+      { expect: "COMPOSE", reply: { answer: "The launch code is 9999.", observationIds: [], answersObjective: "FULLY" } },
+      { expect: "VERIFY", reply: (c) => (verdicts([verdict("NOT_SATISFIED", "The observation shows 4471, not 9999", quotedEvidence(c.prompt))])) },
     );
     const asked = nextEvent(ctx.rt, "TOOL_PERMISSION_REQUIRED");
     const task = await ctx.client.request("task.create", { objective: "Launch code?", projectId: project.id });

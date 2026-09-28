@@ -10,8 +10,10 @@ import {
   cannotProceed,
   completeStep,
   composeCitingAll,
-  observationIds,
   plan,
+  quotedEvidence,
+  verdict,
+  verdicts,
   verdictsAllMet,
 } from "./scripted-ollama";
 
@@ -43,7 +45,7 @@ function eventTypes(rt: Runtime, taskId: string) {
   return rt.eventLog.list({ taskId: taskId as never }).map((e) => e.type);
 }
 
-const READ_CRITERIA = ["The answer states the launch code from notes.txt"];
+const READ_CRITERIA = ["The answer states the launch code"];
 
 function successfulReadScript(ollama: ScriptedOllama) {
   return ollama.script(
@@ -70,7 +72,7 @@ describe("agent loop — model availability", () => {
     ollama.script(
       { expect: "PLAN", reply: plan([{ title: "Compute the sum" }], ["The answer is 4"]) },
       { expect: "DECIDE", reply: completeStep("2 + 2 = 4") },
-      { expect: "COMPOSE", reply: { answer: "2 + 2 = 4.", observationIds: [] } },
+      { expect: "COMPOSE", reply: { answer: "2 + 2 = 4.", observationIds: [], answersObjective: "FULLY" } },
       { expect: "VERIFY", reply: verdictsAllMet(["The answer is 4"]) },
     );
     await rt.modelService.refresh();
@@ -149,7 +151,7 @@ describe("agent loop — model output", () => {
     await rt.orchestrator.start(task.id);
     const format = ollama.calls[0]!.body.format as Record<string, unknown>;
     expect(format.type).toBe("object");
-    expect(Object.keys(format.properties as object)).toEqual(["summary", "steps", "successCriteria"]);
+    expect(Object.keys(format.properties as object)).toEqual(["summary", "steps", "criteria"]);
     expect(ollama.calls[0]!.body.think).toBe(false);
   });
 });
@@ -269,11 +271,8 @@ describe("agent loop — tools, permissions and verification", () => {
       { expect: "PLAN", reply: plan([{ title: "Read notes", tools: ["filesystem.read_text_file"] }], READ_CRITERIA) },
       { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },
       { expect: "DECIDE", reply: completeStep() },
-      { expect: "COMPOSE", reply: { answer: "The launch code is 9999.", observationIds: [newId("observation")] } },
-      {
-        expect: "VERIFY",
-        reply: { verdicts: [{ criterion: READ_CRITERIA[0], met: true, observationIds: [], explanation: "trust me" }] },
-      },
+      { expect: "COMPOSE", reply: { answer: "The launch code is 9999.", observationIds: [newId("observation")], answersObjective: "FULLY" } },
+      { expect: "VERIFY", reply: verdicts([verdict("SATISFIED", "trust me")]) },
     );
     answerNext(rt, "ALLOW");
     const task = rt.taskService.create({ objective: "Launch code?", projectId: project.id }, USER);
@@ -282,8 +281,10 @@ describe("agent loop — tools, permissions and verification", () => {
     expect(after.status).toBe("FAILED");
     expect(after.statusReason?.code).toBe("VERIFICATION_FAILED");
     expect(after.result?.verification.passed).toBe(false);
+    expect(after.result?.verification.outcome).toBe("NOT_VERIFIED");
     expect(after.result?.verification.reasons.join(" ")).toMatch(/unknown observations/);
-    expect(after.result?.verification.reasons.join(" ")).toMatch(/without citing any observation/);
+    expect(after.result?.verification.reasons.join(" ")).toMatch(/without evidence found in an observation/);
+    expect(after.result?.verification.criteria?.[0]).toMatchObject({ modelStatus: "SATISFIED", status: "INSUFFICIENT_EVIDENCE" });
     expect(after.result?.observationIds).toEqual([]);
     expect(eventTypes(rt, task.id)).toContain("VERIFICATION_FAILED");
     expect(rt.memoryService.list({ taskId: task.id })).toHaveLength(0);
@@ -298,7 +299,13 @@ describe("agent loop — tools, permissions and verification", () => {
       { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },
       { expect: "DECIDE", reply: completeStep() },
       { expect: "COMPOSE", reply: composeCitingAll("4471") },
-      { expect: "VERIFY", reply: (c) => ({ verdicts: [{ criterion: READ_CRITERIA[0], met: true, observationIds: [mangled(observationIds(c.prompt)[0]!)], explanation: "shown" }] }) },
+      {
+        expect: "VERIFY",
+        reply: (c) => {
+          const [real] = quotedEvidence(c.prompt);
+          return verdicts([verdict("SATISFIED", "shown", [{ observationId: mangled(real!.observationId), excerpt: real!.excerpt }])]);
+        },
+      },
       { expect: "VERIFY", reply: verdictsAllMet(READ_CRITERIA) },
     );
     answerNext(rt, "ALLOW");
@@ -313,7 +320,7 @@ describe("agent loop — tools, permissions and verification", () => {
   it("does not repair a verifier citation that stays invalid after correction", async () => {
     const { rt, ollama } = await setup();
     const { project } = workspace(rt);
-    const bad = { verdicts: [{ criterion: READ_CRITERIA[0], met: true, observationIds: ["obs_01M:NOTREAL"], explanation: "x" }] };
+    const bad = verdicts([verdict("SATISFIED", "x", [{ observationId: "obs_01M:NOTREAL", excerpt: "The launch code is 4471" }])]);
     ollama.script(
       { expect: "PLAN", reply: plan([{ title: "Read notes", tools: ["filesystem.read_text_file"] }], READ_CRITERIA) },
       { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "notes.txt" }) },

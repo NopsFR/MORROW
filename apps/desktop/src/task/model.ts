@@ -5,6 +5,7 @@
  */
 import type { MorrowEvent } from "@morrow/events";
 import type {
+  CriterionStatus,
   JsonValue,
   Observation,
   PermissionRequest,
@@ -48,7 +49,9 @@ export function phaseOf(detail: TaskDetail): Phase {
     PLANNING:
       task.statusReason?.code === "REPLANNING"
         ? { label: "Replanning", tone: "accent", active: true, doing: `Revising plan v${detail.plan?.version ?? 1}: ${reason}` }
-        : { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
+        : task.statusReason?.code === "CRITERIA_REVISION"
+          ? { label: "Revising criteria", tone: "warning", active: true, doing: `Verification found criteria of plan v${detail.plan?.version ?? 1} that do not express the objective — see Verification` }
+          : { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
     EXECUTING: { label: "Executing", tone: "accent", active: true, doing: step ? `Working on ${position}: ${step.title}` : "Choosing the next action" },
     OBSERVING: { label: "Observing", tone: "accent", active: true, doing: "Recording what the tool returned" },
     AWAITING_PERMISSION: {
@@ -70,6 +73,8 @@ export function phaseOf(detail: TaskDetail): Phase {
 
 function clipReason(code: string, message: string): string {
   if (code === "VERIFICATION_FAILED") return "The result did not pass verification — see Verification";
+  if (code === "INSUFFICIENT_EVIDENCE") return "The evidence does not show the result — see Verification";
+  if (code === "CRITERIA_INVALID") return "Success criteria did not express the objective — see Verification";
   return message.length > 180 ? `${message.slice(0, 177)}…` : message;
 }
 
@@ -203,12 +208,20 @@ export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): Ti
         push("Plan created", `${e.payload.steps.length} step${e.payload.steps.length === 1 ? "" : "s"} · ${e.payload.summary}`, "accent");
         break;
       case "PLAN_REPLAN_REQUESTED":
-        push(`Replan requested · plan v${e.payload.planVersion}`, e.payload.reason, "warning");
+        push(
+          e.payload.trigger === "VERIFICATION" ? `Criteria revision requested · plan v${e.payload.planVersion}` : `Replan requested · plan v${e.payload.planVersion}`,
+          e.payload.reason,
+          "warning",
+        );
         break;
       case "PLAN_UPDATED":
         push(
-          `Replanned · v${e.payload.previousVersion} → v${e.payload.planVersion}`,
-          `${e.payload.steps.length} new step${e.payload.steps.length === 1 ? "" : "s"}${e.payload.keptStepIds.length ? `, ${e.payload.keptStepIds.length} kept` : ""} · ${e.payload.reason}`,
+          e.payload.trigger === "VERIFICATION"
+            ? `Criteria revised · v${e.payload.previousVersion} → v${e.payload.planVersion}`
+            : `Replanned · v${e.payload.previousVersion} → v${e.payload.planVersion}`,
+          e.payload.trigger === "VERIFICATION"
+            ? `${e.payload.revisedCriterionIds?.length ?? 0} criterion(s) replaced${e.payload.steps.length ? `, ${e.payload.steps.length} new step(s)` : ""} · ${e.payload.reason}`
+            : `${e.payload.steps.length} new step${e.payload.steps.length === 1 ? "" : "s"}${e.payload.keptStepIds.length ? `, ${e.payload.keptStepIds.length} kept` : ""} · ${e.payload.reason}`,
           "accent",
         );
         break;
@@ -218,7 +231,7 @@ export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): Ti
       case "MODEL_RESPONDED":
         push(
           `Model · ${e.payload.purpose.toLowerCase()}`,
-          `${modelName(e.payload.modelId)} · ${formatDuration(e.payload.latencyMs)} · ${e.payload.outcome === "VALID" ? "valid output" : e.payload.outcome === "INVALID_OUTPUT" ? "invalid output" : "call failed"}`,
+          `${modelName(e.payload.modelId)} · ${formatDuration(e.payload.latencyMs)} · ${e.payload.outcome === "VALID" ? "valid output" : e.payload.outcome === "INVALID_OUTPUT" ? `output rejected${e.payload.problem ? `: ${e.payload.problem}` : ""}` : "call failed"}`,
           e.payload.outcome === "VALID" ? "neutral" : "warning",
         );
         break;
@@ -257,7 +270,15 @@ export function timeline(events: readonly MorrowEvent[], detail: TaskDetail): Ti
         push("Verification passed", `${e.payload.evidence.length} checks satisfied`, "success");
         break;
       case "VERIFICATION_FAILED":
-        push("Verification failed", e.payload.reasons.join("; "), "error");
+        push(
+          e.payload.outcome === "INSUFFICIENT_EVIDENCE"
+            ? "Verification · insufficient evidence"
+            : e.payload.outcome === "CRITERIA_INVALID"
+              ? "Verification · criteria invalid"
+              : "Verification failed",
+          e.payload.reasons.join("; "),
+          e.payload.outcome === "CRITERIA_INVALID" || e.payload.outcome === "INSUFFICIENT_EVIDENCE" ? "warning" : "error",
+        );
         break;
       case "MEMORY_PROPOSED":
         push("Memory proposed", `${human(e.payload.type)} · awaiting your decision`, "accent");
@@ -342,57 +363,111 @@ export function observations(detail: TaskDetail): ObservationView[] {
 // ── Verification ───────────────────────────────────────────────────
 
 /** Checks MORROW performs itself, as opposed to criteria judged by a model. */
-const DETERMINISTIC = new Set(["Every planned step completed", "The answer cites only real observations"]);
+const DETERMINISTIC = new Set(["Every planned step completed", "The answer cites only real observations", "The answer says it accomplishes the objective"]);
 
 export interface VerificationCheck {
   readonly description: string;
   readonly passed: boolean | null;
+  /** Grounded criteria: SATISFIED, NOT_SATISFIED, INSUFFICIENT_EVIDENCE or CRITERION_INVALID. */
+  readonly status: CriterionStatus | null;
   readonly detail: string | null;
   readonly judgedBy: "MORROW" | "MODEL";
+  readonly required: boolean;
+  /** The words of the objective the criterion comes from (grounded criteria only). */
+  readonly basis: string | null;
+  /** Direct evidence: excerpts MORROW found verbatim in the cited observations. */
+  readonly evidence: readonly { readonly observationId: string; readonly excerpt: string }[];
+  /** The model's interpretation, shown as such. */
+  readonly assessment: string | null;
 }
 
 export interface VerificationView {
-  /** COMPOSING: the task is in VERIFYING and the answer is being composed before checks begin. */
-  readonly status: "NOT_STARTED" | "COMPOSING" | "RUNNING" | "PASSED" | "FAILED";
+  /**
+   * COMPOSING: the task is in VERIFYING and the answer is being composed before checks begin.
+   * REVISING: verification found criteria that do not express the objective; they are being revised.
+   */
+  readonly status: "NOT_STARTED" | "COMPOSING" | "RUNNING" | "REVISING" | "PASSED" | "FAILED" | "INSUFFICIENT_EVIDENCE" | "CRITERIA_INVALID";
   readonly checks: readonly VerificationCheck[];
   readonly citedObservationIds: readonly string[];
   readonly failureReasons: readonly string[];
 }
 
 export function verification(detail: TaskDetail, events: readonly MorrowEvent[]): VerificationView {
-  const started = events.some((e) => e.type === "VERIFICATION_STARTED");
+  const verificationEvents = events.filter((e) => e.type === "VERIFICATION_STARTED" || e.type === "VERIFICATION_PASSED" || e.type === "VERIFICATION_FAILED");
+  const last = verificationEvents.at(-1);
   const outcome = detail.task.result?.verification ?? null;
   const verifying = detail.task.status === "VERIFYING";
+  const revising =
+    !outcome && last?.type === "VERIFICATION_FAILED" && last.payload.outcome === "CRITERIA_INVALID" && !["COMPLETED", "FAILED", "CANCELLED"].includes(detail.task.status);
+  // A criteria revision ends a verification round; checks of the current round start after it.
+  const roundStart = verificationEvents.findLastIndex((e) => e.type === "VERIFICATION_FAILED" && e.payload.outcome === "CRITERIA_INVALID");
+  const started = verificationEvents.slice(roundStart + 1).some((e) => e.type === "VERIFICATION_STARTED");
   const status: VerificationView["status"] = outcome
     ? outcome.passed
       ? "PASSED"
-      : "FAILED"
-    : verifying
-      ? started
-        ? "RUNNING"
-        : "COMPOSING"
-      : "NOT_STARTED";
+      : outcome.outcome === "INSUFFICIENT_EVIDENCE" || outcome.outcome === "CRITERIA_INVALID"
+        ? outcome.outcome
+        : "FAILED"
+    : revising
+      ? "REVISING"
+      : verifying
+        ? started
+          ? "RUNNING"
+          : "COMPOSING"
+        : "NOT_STARTED";
 
-  const descriptions = [...DETERMINISTIC, ...(detail.plan?.successCriteria ?? [])];
-  const checks = descriptions.map((description): VerificationCheck => {
-    const judgedBy = DETERMINISTIC.has(description) ? "MORROW" : "MODEL";
-    if (!outcome) return { description, passed: null, detail: null, judgedBy };
-    const prefix = `${description}: `;
-    const ok = outcome.evidence.find((s) => s.startsWith(prefix));
-    const bad = outcome.reasons.find((s) => s.startsWith(prefix));
-    return {
-      description,
-      passed: ok ? true : bad ? false : null,
-      detail: (ok ?? bad)?.slice(prefix.length) ?? null,
-      judgedBy,
-    };
-  });
+  const structural = [...DETERMINISTIC]
+    .map((description): VerificationCheck => {
+      const base = { description, status: null, judgedBy: "MORROW" as const, required: true, basis: null, evidence: [], assessment: null };
+      if (!outcome) return { ...base, passed: null, detail: null };
+      const prefix = `${description}: `;
+      const ok = outcome.evidence.find((s) => s.startsWith(prefix));
+      const bad = outcome.reasons.find((s) => s.startsWith(prefix));
+      return { ...base, passed: ok ? true : bad ? false : null, detail: (ok ?? bad)?.slice(prefix.length) ?? null };
+    })
+    // A finished result that never had a check (older results) does not show it as pending.
+    .filter((c) => !outcome || c.passed !== null);
 
+  const criteria = detail.plan?.criteria ?? null;
+  const judged = outcome?.criteria;
+  const modelChecks: VerificationCheck[] = judged
+    ? judged.map((c) => ({
+        description: c.requirement,
+        passed: c.status === "SATISFIED",
+        status: c.status,
+        detail: c.note,
+        judgedBy: "MODEL",
+        required: c.required,
+        basis: criteria?.find((x) => x.id === c.criterionId)?.objectiveBasis ?? null,
+        evidence: c.evidence,
+        assessment: c.assessment || null,
+      }))
+    : criteria
+      ? criteria.map((c) => ({ description: c.requirement, passed: null, status: null, detail: null, judgedBy: "MODEL", required: c.required, basis: c.objectiveBasis, evidence: [], assessment: null }))
+      : // Results and plans from before grounded verification: plain statements, matched by prefix.
+        (detail.plan?.successCriteria ?? []).map((description): VerificationCheck => {
+          const prefix = `${description}: `;
+          const ok = outcome?.evidence.find((s) => s.startsWith(prefix));
+          const bad = outcome?.reasons.find((s) => s.startsWith(prefix));
+          return {
+            description,
+            passed: outcome ? (ok ? true : bad ? false : null) : null,
+            status: null,
+            detail: (ok ?? bad)?.slice(prefix.length) ?? null,
+            judgedBy: "MODEL",
+            required: true,
+            basis: null,
+            evidence: [],
+            assessment: null,
+          };
+        });
+
+  const failedEvent = last?.type === "VERIFICATION_FAILED" ? last : null;
   return {
     status,
-    checks,
+    checks: [...structural, ...modelChecks],
     citedObservationIds: detail.task.result?.observationIds ?? [],
-    failureReasons: outcome && !outcome.passed ? outcome.reasons : [],
+    failureReasons: outcome && !outcome.passed ? outcome.reasons : revising && failedEvent ? failedEvent.payload.reasons : [],
   };
 }
 

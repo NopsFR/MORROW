@@ -20,12 +20,17 @@ export function PlanSection({ detail }: { detail: TaskDetail }) {
   const steps = planSteps(detail);
   const plan = detail.plan;
   const earlier = detail.plans.filter((p) => p.id !== plan?.id).reverse();
+  const previous = detail.plans.find((p) => p.id === plan?.previousPlanId);
+  // Criteria this version introduced as replacements (revised after verification).
+  const revisedHere = new Set(
+    (plan?.criteria ?? []).filter((c) => c.revisionOf && !(previous?.criteria ?? []).some((p) => p.id === c.id)).map((c) => c.id as string),
+  );
   return (
     <section className="tv-section" aria-label="Plan">
       <SectionHeader title="Plan" trailing={plan ? <Mono data-testid="plan-version">v{plan.version}</Mono> : null} />
       {plan && plan.version > 1 ? (
         <div className="tv-replan" data-testid="plan-replan-reason">
-          <span className="m-label m-tone-accent">Revised after observation</span>
+          <span className="m-label m-tone-accent">{revisedHere.size > 0 ? "Criteria revised after verification" : "Revised after observation"}</span>
           <p>{plan.reason}</p>
           {plan.triggerObservationIds.length > 0 ? (
             <div className="tv-cites">
@@ -45,7 +50,25 @@ export function PlanSection({ detail }: { detail: TaskDetail }) {
       ) : (
         <StepList steps={steps} currentPlanId={plan?.id ?? null} />
       )}
-      {plan && plan.successCriteria.length > 0 ? (
+      {plan && plan.criteria && plan.criteria.length > 0 ? (
+        <div className="tv-criteria">
+          <span className="m-label m-tone-muted">Success criteria</span>
+          <ul>
+            {plan.criteria.map((c) => (
+              <li key={c.id} data-criterion={c.id}>
+                {c.requirement}
+                {c.required ? null : <span className="tv-muted"> · optional</span>}
+                {revisedHere.has(c.id) ? <span className="tv-muted"> · revised</span> : null}
+                {c.origin === "OBJECTIVE" ? (
+                  <div className="tv-muted">The objective itself, added by MORROW</div>
+                ) : (
+                  <div className="tv-muted">From the objective: “{c.objectiveBasis}”</div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : plan && plan.successCriteria.length > 0 ? (
         <div className="tv-criteria">
           <span className="m-label m-tone-muted">Success criteria</span>
           <ul>

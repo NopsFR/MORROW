@@ -11,6 +11,7 @@ export const ID_PREFIXES = {
   task: "task",
   taskStep: "step",
   plan: "plan",
+  criterion: "crit",
   event: "evt",
   observation: "obs",
   verification: "vrf",

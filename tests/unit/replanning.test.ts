@@ -13,8 +13,11 @@ import {
   composeCitingAll,
   observationIds,
   plan,
+  quotedEvidence,
   replanProposal,
   requestReplan,
+  verdict,
+  verdicts,
   verdictsAllMet,
 } from "./scripted-ollama";
 
@@ -83,8 +86,8 @@ function scriptSuccessfulReplan(ollama: ScriptedOllama) {
     { expect: "DECIDE", reply: callTool("filesystem.read_text_file", { path: "Cargo.toml" }, "Read the Rust manifest") },
     { expect: "DECIDE", reply: completeStep("Read Cargo.toml") },
     { expect: "DECIDE", reply: completeStep("Version is 0.4.2") },
-    { expect: "COMPOSE", reply: (call) => ({ answer: "The version is 0.4.2.", observationIds: observationIds(call.prompt).slice(-1) }) },
-    { expect: "VERIFY", reply: (call) => ({ verdicts: [{ criterion: CRITERIA[0], met: true, observationIds: observationIds(call.prompt).slice(-1), explanation: "Cargo.toml shows 0.4.2" }] }) },
+    { expect: "COMPOSE", reply: (call) => ({ answer: "The version is 0.4.2.", observationIds: observationIds(call.prompt).slice(-1), answersObjective: "FULLY" }) },
+    { expect: "VERIFY", reply: (call) => (verdicts([verdict("SATISFIED", "Cargo.toml shows 0.4.2", quotedEvidence(call.prompt).slice(-1))], undefined, "0.4.2")) },
   );
 }
 

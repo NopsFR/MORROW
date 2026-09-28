@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { TaskStep } from "@morrow/schemas";
+import type { Criterion, TaskStep } from "@morrow/schemas";
 import type { TaskContext } from "../context";
 import type { ModelCallResult, ModelGateway } from "../model/gateway";
 import { decisionPrompt, type StepHistoryEntry } from "../prompts";
@@ -34,7 +34,7 @@ export class ActionDecider {
 
   async decide(
     context: TaskContext,
-    plan: { summary: string; version: number; steps: readonly TaskStep[] },
+    plan: { summary: string; version: number; steps: readonly TaskStep[]; criteria: readonly Criterion[] },
     step: TaskStep,
     history: readonly StepHistoryEntry[],
     signal?: AbortSignal,

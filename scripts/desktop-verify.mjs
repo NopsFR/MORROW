@@ -75,7 +75,12 @@ async function snapshot() {
         // textContent: earlier versions sit in a collapsed <details>, where innerText is empty.
         steps: [...d.querySelectorAll(".tv-step")].map((n) => ({ status: n.getAttribute("data-status"), text: n.textContent.replace(/\s+/g, " ").trim() })),
       })),
-      criteria: text(".tv-criteria li"),
+      // The requirement is the item's own text; the objective's words sit in a line below it.
+      criteria: [...el.querySelectorAll(".tv-criteria li")].map((li) => li.childNodes[0].textContent.trim()),
+      // The line under each grounded criterion: its basis, or that it is the objective itself.
+      criteriaBasis: [...el.querySelectorAll(".tv-criteria li")].map((li) => li.querySelector("div.tv-muted")?.textContent.trim() ?? null),
+      checkStatuses: [...el.querySelectorAll('[aria-label="Verification"] .tv-check')].map((n) => n.getAttribute("data-status")),
+      evidence: text('[aria-label="Verification"] .tv-evidence'),
       events: [...el.querySelectorAll(".tv-event")].map((n) => ({
         sequence: Number(n.getAttribute("data-sequence")),
         type: n.getAttribute("data-type"),
@@ -311,7 +316,8 @@ function crossCheck(taskId, snap) {
     `${rendered.length} rendered / ${visible.length} persisted (+${events.length - visible.length} folded)`,
   );
   // A task that fails before verification (e.g. invalid model output) has no verification events.
-  const reachedVerification = task.status === "COMPLETED" || JSON.parse(task.status_reason ?? "null")?.code === "VERIFICATION_FAILED";
+  const reachedVerification =
+    task.status === "COMPLETED" || ["VERIFICATION_FAILED", "INSUFFICIENT_EVIDENCE", "CRITERIA_INVALID"].includes(JSON.parse(task.status_reason ?? "null")?.code);
   // Required events follow what the database says happened, not the outcome we hoped for.
   const ranTool = executions.some((e) => e.status === "SUCCEEDED" || e.status === "FAILED");
   const pipeline = ["TASK_CREATED", "PLAN_CREATED", "TOOL_REQUESTED", "TOOL_PERMISSION_REQUIRED", "PERMISSION_RESOLVED"];
@@ -341,6 +347,50 @@ function crossCheck(taskId, snap) {
     check("every replan cites only real observations of the task", updates.every((u) => u.observationIds.every((id) => obsIds.has(id))), updates.map((u) => u.observationIds.join(",")).join(" | "));
   }
   check("success criteria match the active plan version", JSON.stringify(snap.criteria) === active?.success_criteria, active?.success_criteria);
+  const grounded = active?.criteria ? JSON.parse(active.criteria) : null;
+  if (grounded) {
+    const flat = (s) => s.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+    check(
+      "every criterion is grounded in the user's own words (basis shown and found in the objective)",
+      grounded.every(
+        (c, i) =>
+          flat(task.objective).includes(flat(c.objectiveBasis)) &&
+          (c.origin === "OBJECTIVE"
+            ? snap.criteriaBasis[i] === "The objective itself, added by MORROW" && c.objectiveBasis === task.objective.trim()
+            : snap.criteriaBasis[i] === `From the objective: “${c.objectiveBasis}”`),
+      ),
+      grounded.map((c) => `${c.origin === "OBJECTIVE" ? "[objective] " : ""}"${c.requirement}" ← "${c.objectiveBasis}"`).join(" | "),
+    );
+  }
+  const verdicts = (task.result ? JSON.parse(task.result) : null)?.verification?.criteria;
+  if (verdicts) {
+    const d3 = db();
+    const data = new Map(d3.prepare("select id, data, summary from observations where task_id = ?").all(taskId).map((o) => [o.id, o]));
+    d3.close();
+    // The documented rule (D58), implemented independently of the runtime: presentation is
+    // ignored — escaped or unescaped, punctuation and spacing — but every letter, digit, "."
+    // and "-" of the excerpt must appear, in order, in the observation MORROW recorded.
+    const decode = (s) => s.replace(/\\(["\\/nrt])/g, (_, c) => ("nrt".includes(c) ? " " : c));
+    const sig = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}.-]+/gu, "");
+    const readings = (s) => [...new Set([sig(s), sig(decode(s))])];
+    const leaves = (v) => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(leaves) : v && typeof v === "object" ? Object.entries(v).flatMap(([k, x]) => [k, ...leaves(x)]) : [String(v)]);
+    const found = (e) => {
+      const o = data.get(e.observationId);
+      if (!o) return false;
+      const value = JSON.parse(o.data);
+      const hay = [...readings(JSON.stringify(value)), sig(leaves(value).join(" ")), sig(o.summary)];
+      const needles = readings(e.excerpt).filter((n) => n.replace(/[.-]/g, "").length >= 3);
+      return needles.length > 0 && needles.some((n) => hay.some((h) => h.includes(n)));
+    };
+    const all = verdicts.flatMap((c) => c.evidence);
+    check("every evidence excerpt is really in the observation it cites", all.every(found), all.map((e) => `${e.observationId}: "${e.excerpt}"`).join(" | ") || "no evidence cited");
+    check("evidence shown equals evidence persisted", snap.evidence.length === all.length, `${snap.evidence.length} shown / ${all.length} persisted`);
+    check(
+      "criterion verdicts shown equal the persisted verdicts",
+      JSON.stringify(snap.checkStatuses.filter(Boolean)) === JSON.stringify(verdicts.map((c) => c.status)),
+      verdicts.map((c) => `${c.status}${c.modelStatus !== c.status ? ` (model: ${c.modelStatus})` : ""}`).join(", "),
+    );
+  }
   check("observations match the database", snap.observations.length === observations.length && observations.every((o) => snap.observations.some((m) => m.includes(o.id))), `${observations.length} observation(s)`);
   const executionList = executions.map((e) => `${e.tool_id}=${e.status}`).join(", ");
   if (task.status === "CANCELLED" && !ranTool) {

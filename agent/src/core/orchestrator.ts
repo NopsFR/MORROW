@@ -1,6 +1,6 @@
 import { MorrowError, newId, toErrorShape, type Clock, type Id } from "@morrow/shared";
 import type { EventActor, EventLog, EventRecorder } from "@morrow/events";
-import type { Observation, Plan, StatusReason, Task, TaskResult, TaskStatus, TaskStep } from "@morrow/schemas";
+import type { Criterion, Observation, Plan, StatusReason, Task, TaskResult, TaskStatus, TaskStep, VerificationOutcome } from "@morrow/schemas";
 import type { ObservationRepository, PlanRepository, TaskStepRepository, ToolExecutionRepository } from "@morrow/database";
 import type { PermissionRequests } from "@morrow/permissions";
 import type { MemoryService } from "@morrow/memory";
@@ -8,7 +8,7 @@ import type { ContextBuilder } from "../context";
 import type { ModelCallError, ModelGateway } from "../model/gateway";
 import type { Planner } from "../planner";
 import type { ActionDecider, StepExecutor } from "../executor";
-import { Verifier, taskCriteria, type ResultJudge } from "../verifier";
+import { criteriaOf, evaluateVerification, objectiveCriterion, toCriterion, type ResultJudge } from "../verifier";
 import { decideRecovery } from "../recovery";
 import type { StepHistoryEntry } from "../prompts";
 import type { TaskService } from "./task-service";
@@ -61,7 +61,17 @@ interface ReplanRequest {
   readonly reason: string;
   readonly observationIds: readonly string[];
   readonly stepId: Id<"taskStep"> | null;
+  /** EXECUTION: results contradicted the plan. VERIFICATION: criteria found invalid. */
+  readonly trigger: "EXECUTION" | "VERIFICATION";
+  readonly invalidCriteria: readonly { readonly criterionId: Criterion["id"]; readonly why: string }[];
 }
+
+/** How a task that fails verification is recorded, by outcome. */
+const VERIFICATION_FAILURE_CODES: Record<Exclude<VerificationOutcome, "VERIFIED">, string> = {
+  NOT_VERIFIED: "VERIFICATION_FAILED",
+  INSUFFICIENT_EVIDENCE: "INSUFFICIENT_EVIDENCE",
+  CRITERIA_INVALID: "CRITERIA_INVALID",
+};
 
 /** Thrown to unwind a run that was halted (pause, cancel, shutdown). Never recorded as a failure. */
 class Halted extends Error {}
@@ -82,7 +92,6 @@ class Halted extends Error {}
  */
 export class Orchestrator {
   private readonly running = new Map<Id<"task">, { controller: AbortController; done: Promise<Task> }>();
-  private readonly verifier = new Verifier();
   private readonly limits: AgentLimits;
 
   constructor(private readonly deps: OrchestratorDeps) {
@@ -220,6 +229,10 @@ export class Orchestrator {
 
     const now = this.deps.clock.now();
     const planId = newId("plan", now);
+    // The planner validated its criteria against the objective; only now do they become task
+    // state — after the runtime's own criterion, which is the objective itself.
+    const usesTools = planned.plan.steps.some((s) => s.tools.length > 0);
+    const criteria = [objectiveCriterion(task.objective, usesTools, now), ...planned.plan.criteria.map((c) => toCriterion(c, now))];
     const steps: TaskStep[] = planned.plan.steps.map((s, ordinal) => ({
       id: newId("taskStep", now),
       taskId: task.id,
@@ -242,7 +255,8 @@ export class Orchestrator {
         previousPlanId: null,
         status: "ACTIVE",
         summary: planned.plan.summary,
-        successCriteria: planned.plan.successCriteria,
+        successCriteria: criteria.map((c) => c.requirement),
+        criteria,
         keptStepIds: [],
         reason: null,
         triggerObservationIds: [],
@@ -259,7 +273,8 @@ export class Orchestrator {
         payload: {
           planId,
           summary: planned.plan.summary,
-          successCriteria: planned.plan.successCriteria,
+          successCriteria: criteria.map((c) => c.requirement),
+          criteria,
           modelId: planned.model.id,
           steps: steps.map((s) => ({ stepId: s.id, ordinal: s.ordinal, title: s.title })),
         },
@@ -293,7 +308,12 @@ export class Orchestrator {
     const history = this.history(task.id);
     const decided = await this.deps.decider.decide(
       context,
-      { summary: current.plan.summary, version: current.plan.version, steps: this.currentPlan(task.id).steps },
+      {
+        summary: current.plan.summary,
+        version: current.plan.version,
+        steps: this.currentPlan(task.id).steps,
+        criteria: criteriaOf(current.plan).criteria,
+      },
       step,
       history,
       signal,
@@ -315,6 +335,8 @@ export class Orchestrator {
         reason: decision.reason,
         observationIds: decision.observationIds,
         stepId: step.id,
+        trigger: "EXECUTION",
+        invalidCriteria: [],
       });
       return;
     }
@@ -363,7 +385,9 @@ export class Orchestrator {
     const observations = this.deps.observations.listByTask(task.id);
     const known = new Set(observations.map((o) => o.id as string));
 
-    const composed = await this.deps.judge.compose(context, steps, history, signal);
+    const { criteria, legacy } = criteriaOf(plan);
+
+    const composed = await this.deps.judge.compose(context, steps, criteria, history, signal);
     if (!composed.ok) return this.onModelError(task.id, "VERIFYING", composed.error);
 
     const verificationId = newId("verification", this.deps.clock.now());
@@ -371,56 +395,108 @@ export class Orchestrator {
       type: "VERIFICATION_STARTED",
       actor: AGENT,
       taskId: task.id,
-      payload: { verificationId, criteria: [...plan.successCriteria] },
+      payload: { verificationId, criteria: criteria.map((c) => c.requirement) },
     });
 
-    const judged = await this.deps.judge.judge(context, plan.successCriteria, composed.value.answer, history, signal);
+    const judged = await this.deps.judge.judge(context, criteria, composed.value.answer, history, signal);
     if (!judged.ok && judged.error.code === "CANCELLED") throw new Halted();
-    const verdicts = judged.ok ? judged.value.verdicts : [];
 
-    const report = await this.verifier.verify(
-      task,
-      taskCriteria({
-        steps,
-        answerObservationIds: composed.value.observationIds,
-        criteria: plan.successCriteria,
-        verdicts,
-      }),
+    const report = evaluateVerification({
+      criteria,
+      verdicts: judged.ok ? judged.value.verdicts : null,
+      judgeError: judged.ok ? null : judged.error.message,
+      steps,
+      answerObservationIds: composed.value.observationIds,
+      answersObjective: composed.value.answersObjective,
       observations,
-    );
-    const reasons = judged.ok ? [...report.reasons] : [`Verification could not run: ${judged.error.message}`, ...report.reasons];
-    const passed = judged.ok && report.passed;
-
+    });
     const result: TaskResult = {
       answer: composed.value.answer,
       observationIds: composed.value.observationIds.filter((id) => known.has(id)) as Observation["id"][],
-      verification: { passed, evidence: [...report.evidence], reasons },
+      verification: {
+        passed: report.outcome === "VERIFIED",
+        evidence: [...report.evidence],
+        reasons: [...report.reasons],
+        outcome: report.outcome,
+        criteria: [...report.criteria],
+      },
       modelId: composed.model.id,
     };
 
-    if (passed) {
+    if (report.outcome === "VERIFIED") {
       this.deps.recorder.record({
         type: "VERIFICATION_PASSED",
         actor: AGENT,
         taskId: task.id,
-        payload: { verificationId, evidence: [...report.evidence] },
+        payload: { verificationId, evidence: [...report.evidence], outcome: report.outcome },
       });
       const { event } = this.deps.tasks.transition({ taskId: task.id, to: "COMPLETED", actor: AGENT, result });
       this.proposeEpisode(task, result, event.id);
       return;
     }
-    this.deps.recorder.record({
-      type: "VERIFICATION_FAILED",
-      actor: AGENT,
-      taskId: task.id,
-      payload: { verificationId, reasons },
-    });
-    this.deps.tasks.transition({
-      taskId: task.id,
-      to: "FAILED",
-      actor: AGENT,
-      reason: { code: "VERIFICATION_FAILED", message: reasons.join("; ").slice(0, 1000) },
-      result,
+
+    // A criterion that does not express the objective cannot decide the result either way.
+    // It is revised through a new plan version (bounded like any replan), never waived.
+    const attempts = this.replanAttempts(task.id);
+    const revisable = report.outcome === "CRITERIA_INVALID" && !legacy && attempts < this.limits.maxReplans;
+    if (revisable) {
+      const invalidCriteria = report.criteria
+        .filter((c) => report.invalidCriterionIds.includes(c.criterionId as Criterion["id"]))
+        .map((c) => ({ criterionId: c.criterionId as Criterion["id"], why: c.assessment }));
+      const reason = `Verification found ${invalidCriteria.length} criterion(s) that do not express the objective: ${invalidCriteria.map((c) => c.why).join(" | ")}`;
+      this.deps.recorder.transact((emit) => {
+        emit({
+          type: "VERIFICATION_FAILED",
+          actor: AGENT,
+          taskId: task.id,
+          payload: { verificationId, reasons: [...report.reasons], outcome: report.outcome },
+        });
+        emit({
+          type: "PLAN_REPLAN_REQUESTED",
+          actor: AGENT,
+          taskId: task.id,
+          projectId: task.projectId,
+          payload: {
+            planId: plan.id,
+            planVersion: plan.version,
+            reason: reason.slice(0, 1000),
+            observationIds: [...report.invalidEvidenceIds],
+            stepId: null,
+            attempt: attempts + 1,
+            trigger: "VERIFICATION",
+            invalidCriteria,
+          },
+        });
+        this.deps.tasks.transition({
+          taskId: task.id,
+          to: "PLANNING",
+          actor: AGENT,
+          reason: { code: "CRITERIA_REVISION", message: reason.slice(0, 1000) },
+        });
+      });
+      return;
+    }
+
+    const why =
+      report.outcome === "CRITERIA_INVALID"
+        ? legacy
+          ? "Criteria of a plan made before grounded verification cannot be revised. "
+          : `Criteria still invalid after ${attempts} replan attempt(s). `
+        : "";
+    this.deps.recorder.transact((emit) => {
+      emit({
+        type: "VERIFICATION_FAILED",
+        actor: AGENT,
+        taskId: task.id,
+        payload: { verificationId, reasons: [...report.reasons], outcome: report.outcome },
+      });
+      this.deps.tasks.transition({
+        taskId: task.id,
+        to: "FAILED",
+        actor: AGENT,
+        reason: { code: VERIFICATION_FAILURE_CODES[report.outcome as Exclude<VerificationOutcome, "VERIFIED">], message: `${why}${report.reasons.join("; ")}`.slice(0, 1000) },
+        result,
+      });
     });
   }
 
@@ -472,7 +548,18 @@ export class Orchestrator {
       .list({ taskId, types: ["PLAN_REPLAN_REQUESTED", "PLAN_UPDATED", "PLAN_REPLAN_REJECTED"], limit: 1000 })
       .at(-1);
     if (last?.type !== "PLAN_REPLAN_REQUESTED") return null;
-    return { reason: last.payload.reason, observationIds: last.payload.observationIds, stepId: last.payload.stepId };
+    return {
+      reason: last.payload.reason,
+      observationIds: last.payload.observationIds,
+      stepId: last.payload.stepId,
+      trigger: last.payload.trigger ?? "EXECUTION",
+      invalidCriteria: last.payload.invalidCriteria ?? [],
+    };
+  }
+
+  /** Replan requests so far, of either trigger; together they are bounded by `maxReplans`. */
+  private replanAttempts(taskId: Id<"task">): number {
+    return this.deps.eventLog.list({ taskId, types: ["PLAN_REPLAN_REQUESTED"], limit: 1000 }).length;
   }
 
   /**
@@ -480,7 +567,7 @@ export class Orchestrator {
    * the planner proposes a revision — or fail if the task keeps failing to converge.
    */
   private requestReplan(task: Task, plan: Plan, step: TaskStep, request: ReplanRequest): void {
-    const attempts = this.deps.eventLog.list({ taskId: task.id, types: ["PLAN_REPLAN_REQUESTED"], limit: 1000 }).length;
+    const attempts = this.replanAttempts(task.id);
     if (attempts >= this.limits.maxReplans) {
       this.updateStep(step, { status: "FAILED", outcome: request.reason });
       this.move(task.id, "FAILED", {
@@ -502,6 +589,7 @@ export class Orchestrator {
           observationIds: request.observationIds as Observation["id"][],
           stepId: request.stepId,
           attempt: attempts + 1,
+          trigger: "EXECUTION",
         },
       });
       this.deps.tasks.transition({
@@ -520,12 +608,19 @@ export class Orchestrator {
    * marked as failed (the step that revealed the problem) or superseded.
    */
   private async replanPhase(task: Task, request: ReplanRequest, signal: AbortSignal): Promise<void> {
+    if (request.trigger === "VERIFICATION") return this.criteriaRevisionPhase(task, request, signal);
     const context = await this.deps.context.build(task);
     const { plan, steps } = this.currentPlan(task.id);
     const history = this.history(task.id);
     const proposed = await this.deps.planner.replan(
       context,
-      { plan, steps, history, request: { reason: request.reason, observationIds: request.observationIds } },
+      {
+        plan,
+        criteria: criteriaOf(plan).criteria,
+        steps,
+        history,
+        request: { reason: request.reason, observationIds: request.observationIds },
+      },
       signal,
     );
     if (!proposed.ok) return this.onModelError(task.id, "PLANNING", proposed.error);
@@ -591,7 +686,9 @@ export class Orchestrator {
         previousPlanId: plan.id,
         status: "ACTIVE",
         summary: proposal.summary,
-        successCriteria: proposal.successCriteria,
+        // Criteria come from the objective, not from the plan: a new route keeps them as they are.
+        successCriteria: plan.successCriteria,
+        criteria: plan.criteria,
         keptStepIds,
         reason: proposal.reason,
         triggerObservationIds: evidence,
@@ -616,7 +713,9 @@ export class Orchestrator {
           supersededStepIds,
           failedStepIds,
           summary: proposal.summary,
-          successCriteria: proposal.successCriteria,
+          successCriteria: plan.successCriteria,
+          ...(plan.criteria ? { criteria: plan.criteria } : {}),
+          trigger: "EXECUTION",
           modelId: model.id,
           steps: newSteps.map((st) => ({ stepId: st.id, ordinal: st.ordinal, title: st.title })),
         },
@@ -626,6 +725,115 @@ export class Orchestrator {
         to: "EXECUTING",
         actor: AGENT,
         reason: { code: "REPLANNED", message: `Continuing under plan v${version}` },
+      });
+    });
+  }
+
+  /**
+   * Verification found criteria that do not express the objective. The planner proposes
+   * replacements for exactly those; the runtime validates them (grounded, same part of the
+   * objective, still required, actually different) and records a new plan version that
+   * keeps every completed step and every other criterion. The invalid criteria stay in the
+   * superseded version, so the history shows what was replaced and why.
+   */
+  private async criteriaRevisionPhase(task: Task, request: ReplanRequest, signal: AbortSignal): Promise<void> {
+    const context = await this.deps.context.build(task);
+    const { plan, steps } = this.currentPlan(task.id);
+    const criteria = plan.criteria ?? [];
+    const history = this.history(task.id);
+    const invalid = request.invalidCriteria
+      .map((x) => ({ position: criteria.findIndex((c) => c.id === x.criterionId) + 1, why: x.why || request.reason }))
+      .filter((x) => x.position > 0);
+    if (invalid.length === 0) {
+      this.move(task.id, "FAILED", { code: "CRITERIA_INVALID", message: `No criterion of plan v${plan.version} matches the revision request` });
+      return;
+    }
+
+    const revised = await this.deps.planner.reviseCriteria(
+      context,
+      { plan, criteria, steps, history, request: { reason: request.reason, observationIds: request.observationIds }, invalid },
+      signal,
+    );
+    if (!revised.ok) return this.onModelError(task.id, "PLANNING", revised.error);
+    const { revision, model } = revised;
+
+    const now = this.deps.clock.now();
+    const planId = newId("plan", now);
+    const version = plan.version + 1;
+    const replacements = new Map(revision.replacements.map((r) => [r.criterion, r]));
+    const newCriteria = criteria.map((c, i) => {
+      const r = replacements.get(i + 1);
+      return r ? toCriterion(r, now, c.id) : c;
+    });
+    const revisedCriterionIds = newCriteria.filter((c) => c.revisionOf).map((c) => c.revisionOf!) as Criterion["id"][];
+    // Everything done so far stays: its observations are the evidence the revised criteria are judged on.
+    const keptStepIds = steps.filter((s) => s.status === "COMPLETED").map((s) => s.id);
+    const evidence = [...new Set([...request.observationIds, ...revision.evidenceObservationIds])] as Observation["id"][];
+    const firstOrdinal = Math.max(-1, ...this.deps.steps.listByTask(task.id).map((s) => s.ordinal)) + 1;
+    const newSteps: TaskStep[] = revision.steps.map((s, i) => ({
+      id: newId("taskStep", now),
+      taskId: task.id,
+      planId,
+      ordinal: firstOrdinal + i,
+      title: s.title,
+      description: s.purpose || null,
+      status: "PENDING",
+      expectedToolIds: s.tools,
+      outcome: null,
+      toolExecutionId: null,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    const summary = revision.summary || plan.summary;
+
+    this.deps.recorder.transact((emit) => {
+      this.deps.plans.markSuperseded(plan.id, now);
+      this.deps.plans.insert({
+        id: planId,
+        taskId: task.id,
+        version,
+        previousPlanId: plan.id,
+        status: "ACTIVE",
+        summary,
+        successCriteria: newCriteria.map((c) => c.requirement),
+        criteria: newCriteria,
+        keptStepIds,
+        reason: revision.reason,
+        triggerObservationIds: evidence,
+        modelId: model.id,
+        createdAt: now,
+        supersededAt: null,
+      });
+      for (const s of newSteps) this.deps.steps.insert(s);
+      emit({
+        type: "PLAN_UPDATED",
+        actor: AGENT,
+        taskId: task.id,
+        projectId: task.projectId,
+        payload: {
+          previousPlanId: plan.id,
+          previousVersion: plan.version,
+          planId,
+          planVersion: version,
+          reason: revision.reason,
+          observationIds: evidence,
+          keptStepIds,
+          supersededStepIds: [],
+          failedStepIds: [],
+          summary,
+          successCriteria: newCriteria.map((c) => c.requirement),
+          criteria: newCriteria,
+          trigger: "VERIFICATION",
+          revisedCriterionIds,
+          modelId: model.id,
+          steps: newSteps.map((st) => ({ stepId: st.id, ordinal: st.ordinal, title: st.title })),
+        },
+      });
+      this.deps.tasks.transition({
+        taskId: task.id,
+        to: "EXECUTING",
+        actor: AGENT,
+        reason: { code: "CRITERIA_REVISED", message: `Continuing under plan v${version} with ${revisedCriterionIds.length} revised criterion(s)` },
       });
     });
   }

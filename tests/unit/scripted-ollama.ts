@@ -5,7 +5,7 @@
  * so tests can assert what MORROW actually sent to the model.
  */
 
-export type Purpose = "PLAN" | "REPLAN" | "DECIDE" | "COMPOSE" | "VERIFY";
+export type Purpose = "PLAN" | "REPLAN" | "REVISE" | "DECIDE" | "COMPOSE" | "VERIFY";
 
 export interface ChatCall {
   readonly purpose: Purpose;
@@ -24,6 +24,7 @@ export interface ScriptEntry {
 export function classify(prompt: string): Purpose {
   if (prompt.includes("Produce a plan as JSON")) return "PLAN";
   if (prompt.includes("Propose a revised plan as JSON")) return "REPLAN";
+  if (prompt.includes("Revise the success criteria as JSON")) return "REVISE";
   if (prompt.includes("Decide the single next action")) return "DECIDE";
   if (prompt.includes("Write the final result")) return "COMPOSE";
   if (prompt.includes("SUCCESS CRITERIA")) return "VERIFY";
@@ -91,11 +92,44 @@ export class ScriptedOllama {
 
 // Reply builders — shapes follow the agent's structured output schemas.
 
-export const plan = (steps: Array<{ title: string; tools?: string[] }>, successCriteria: string[]) => ({
-  summary: "Test plan",
-  steps: steps.map((s) => ({ title: s.title, purpose: s.title, tools: s.tools ?? [] })),
-  successCriteria,
-});
+/** The user's objective, as MORROW put it in the prompt. */
+export function objectiveOf(prompt: string): string {
+  return /OBJECTIVE:\n([\s\S]*?)\n\n/.exec(prompt)?.[1] ?? "";
+}
+
+export interface CriterionSpec {
+  requirement: string;
+  objectiveBasis?: string;
+  evidence?: string;
+  verifiableBy?: "OBSERVATION" | "ANSWER";
+  required?: boolean;
+}
+
+/**
+ * A criterion as the model would propose it. By default it is grounded the simplest
+ * honest way: its basis is the whole objective (read from the prompt), and it must be
+ * shown by observations when the plan uses tools, or by the answer when it does not.
+ */
+export const criterion = (spec: string | CriterionSpec, prompt: string, usesTools: boolean) => {
+  const s = typeof spec === "string" ? { requirement: spec } : spec;
+  return {
+    requirement: s.requirement,
+    objectiveBasis: s.objectiveBasis ?? objectiveOf(prompt),
+    evidence: s.evidence ?? "",
+    verifiableBy: s.verifiableBy ?? (usesTools ? "OBSERVATION" : "ANSWER"),
+    required: s.required ?? true,
+  };
+};
+
+export const plan =
+  (steps: Array<{ title: string; tools?: string[] }>, criteria: Array<string | CriterionSpec>) => (call: ChatCall) => {
+    const usesTools = steps.some((s) => (s.tools ?? []).length > 0);
+    return {
+      summary: "Test plan",
+      steps: steps.map((s) => ({ title: s.title, purpose: s.title, tools: s.tools ?? [] })),
+      criteria: criteria.map((c) => criterion(c, call.prompt, usesTools)),
+    };
+  };
 
 export const callTool = (toolId: string, input: object, note = "calling tool") => ({ action: "call_tool", toolId, input, note });
 export const completeStep = (note = "done") => ({ action: "complete_step", toolId: "", input: {}, note });
@@ -109,7 +143,6 @@ export const replanProposal = (p: {
   evidence: string[];
   affectedSteps?: number[];
   keepSteps?: number[];
-  successCriteria?: string[];
   replanRequired?: boolean;
 }) => ({
   replanRequired: p.replanRequired ?? true,
@@ -119,21 +152,108 @@ export const replanProposal = (p: {
   evidenceObservationIds: p.evidence,
   summary: "Revised plan",
   steps: p.steps.map((s) => ({ title: s.title, purpose: s.title, tools: s.tools ?? [] })),
-  successCriteria: p.successCriteria ?? ["The version is reported"],
 });
+
+/** A criteria revision: replacements for the criteria (by number) verification found invalid. */
+export const criteriaRevision =
+  (p: { reason: string; replacements: Array<{ criterion: number } & CriterionSpec>; evidence?: string[]; steps?: Array<{ title: string; tools?: string[] }> }) =>
+  (call: ChatCall) => ({
+    reason: p.reason,
+    evidenceObservationIds: p.evidence ?? [],
+    replacements: p.replacements.map((r) => ({ criterion: r.criterion, ...criterion(r, call.prompt, true) })),
+    summary: "Revised criteria",
+    steps: (p.steps ?? []).map((s) => ({ title: s.title, purpose: s.title, tools: s.tools ?? [] })),
+  });
+
+export type AnswersObjective = "FULLY" | "PARTIALLY" | "NOT_AT_ALL";
 
 /** Compose an answer citing every observation id visible in the prompt. */
-export const composeCitingAll = (answer: string) => (call: ChatCall) => ({
-  answer,
-  observationIds: observationIds(call.prompt),
+export const composeCitingAll =
+  (answer: string, answersObjective: AnswersObjective = "FULLY") =>
+  (call: ChatCall) => ({
+    answer,
+    observationIds: observationIds(call.prompt),
+    answersObjective,
+  });
+
+/** Compose an answer citing nothing (no tools were used, or the model cites nothing). */
+export const composeUncited = (answer: string, answersObjective: AnswersObjective = "FULLY") => ({ answer, observationIds: [], answersObjective });
+
+/** How many success criteria the verification prompt lists (the objective's own included). */
+export function criteriaCount(prompt: string): number {
+  const section = /SUCCESS CRITERIA:\n([\s\S]*?)\n\n/.exec(prompt)?.[1] ?? "";
+  return section.split("\n").filter((l) => /^\d+\. /.test(l)).length;
+}
+
+/**
+ * Evidence as the verifier would quote it: for each successful observation shown in the
+ * prompt, its id and the first characters of its data exactly as the prompt shows them.
+ */
+export function quotedEvidence(prompt: string): Array<{ observationId: string; excerpt: string }> {
+  return [...prompt.matchAll(/observation (obs_[0-9A-Z]{26}):\n(.{12,40})/g)].map((m) => ({ observationId: m[1]!, excerpt: m[2]! }));
+}
+
+export type VerdictStatus = "SATISFIED" | "NOT_SATISFIED" | "INSUFFICIENT_EVIDENCE" | "CRITERION_INVALID";
+
+/** A verdict with an explicit status and evidence (default: none). */
+export const verdict = (status: VerdictStatus, explanation: string, evidence: Array<{ observationId: string; excerpt: string }> = [], finding = "") => ({
+  status,
+  evidence,
+  explanation,
+  finding,
 });
 
-/** Judge every criterion met, citing all observations in the prompt. */
-export const verdictsAllMet = (criteria: string[]) => (call: ChatCall) => ({
-  verdicts: criteria.map((criterion) => ({
-    criterion,
-    met: true,
-    observationIds: observationIds(call.prompt),
-    explanation: "demonstrated by the observations",
-  })),
+/**
+ * Judge every criterion the prompt lists satisfied, quoting every successful observation.
+ * (The argument names the plan's criteria for readability; the count comes from the prompt,
+ * which also lists the objective's own criterion.)
+ */
+export const verdictsAllMet = (_criteria?: readonly unknown[]) => (call: ChatCall) => {
+  const evidence = quotedEvidence(call.prompt);
+  const finding = objectiveCriterionListed(call.prompt) ? findingIn(call.prompt) : "";
+  return {
+    verdicts: Array.from({ length: criteriaCount(call.prompt) }, (_, i) =>
+      verdict("SATISFIED", "demonstrated by the observations", evidence, i === 0 ? finding : ""),
+    ),
+  };
+};
+
+/** Whether the verification prompt lists the objective's own criterion (grounded plans do, first). */
+export function objectiveCriterionListed(prompt: string): boolean {
+  return /SUCCESS CRITERIA:\n1\. .*\(the objective itself\)/.test(prompt);
+}
+
+/**
+ * The answer's finding, as a careful verifier would name it: a word of the proposed answer
+ * that also appears in an observation shown in the prompt and is not one of the
+ * objective's own words. Digits first (values), then the longest word. "" if none.
+ */
+export function findingIn(prompt: string): string {
+  const answer = /PROPOSED ANSWER:\n([\s\S]*?)\n\n/.exec(prompt)?.[1] ?? "";
+  const objective = objectiveOf(prompt).toLowerCase();
+  // What the tools returned: the values of each observation's data (not its keys).
+  const values = (v: unknown): string[] =>
+    typeof v === "string" || typeof v === "number" ? [String(v)] : Array.isArray(v) ? v.flatMap(values) : v && typeof v === "object" ? Object.values(v).flatMap(values) : [];
+  const observed = [...prompt.matchAll(/observation obs_[0-9A-Z]{26}:\n(.*)/g)]
+    .flatMap((m) => {
+      try {
+        return values(JSON.parse(m[1]!));
+      } catch {
+        return [];
+      }
+    })
+    .join("\n")
+    .toLowerCase();
+  const words = [...new Set(answer.match(/[\p{L}\p{N}][\p{L}\p{N}.-]*[\p{L}\p{N}]/gu) ?? [])].filter((w) => w.length >= 3 && observed.includes(w.toLowerCase()));
+  // Prefer values (digits), then what the objective did not already say, then the longest.
+  const score = (w: string) => Number(/\d/.test(w)) * 2 + Number(!objective.includes(w.toLowerCase()));
+  return words.sort((a, b) => score(b) - score(a) || b.length - a.length)[0] ?? "";
+}
+
+/**
+ * Verdicts for a grounded plan: the objective's own criterion first, then the plan's.
+ * `objective` defaults to the same verdict as the first plan criterion.
+ */
+export const verdicts = (planVerdicts: ReturnType<typeof verdict>[], objective?: ReturnType<typeof verdict>, finding = "") => ({
+  verdicts: [objective ?? { ...planVerdicts[0]!, finding }, ...planVerdicts],
 });

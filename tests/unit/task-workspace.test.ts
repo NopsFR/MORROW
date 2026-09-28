@@ -5,7 +5,7 @@ import { tempDir } from "./helpers";
 import { ScriptedOllama, callTool, completeStep, composeCitingAll, plan, verdictsAllMet } from "./scripted-ollama";
 import { connectedWorkspace, makeWorkspaceDir, nextEvent, workspaceReaches } from "./workspace-fixtures";
 
-const CRITERIA = ["The answer states the launch code from notes.txt"];
+const CRITERIA = ["The answer states the launch code"];
 
 function readScript(ollama: ScriptedOllama) {
   return ollama.script(
@@ -40,7 +40,8 @@ describe("task workspace — live state from the runtime", () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ capability: "fs.read", toolId: "filesystem.read_text_file", riskLevel: "LOW" });
     expect(waiting.steps.find((s) => s.status === "RUNNING")?.title).toBe("Read notes.txt");
-    expect(waiting.plan?.successCriteria).toEqual(CRITERIA);
+    // The objective's own criterion first, then the planner's.
+    expect(waiting.plan?.successCriteria).toEqual(['The answer accomplishes the objective as stated: "What is the launch code?"', ...CRITERIA]);
 
     // The user answers through the workspace; the runtime continues.
     await ctx.workspace.respondToPermission(pending[0]!.id, "ALLOW", "ONE_TIME");
@@ -67,7 +68,7 @@ describe("task workspace — live state from the runtime", () => {
     ctx.ollama.script(
       { expect: "PLAN", reply: plan([{ title: "Answer" }], ["The answer is given"]) },
       { expect: "DECIDE", reply: completeStep("answered") },
-      { expect: "COMPOSE", reply: { answer: "Done.", observationIds: [] } },
+      { expect: "COMPOSE", reply: { answer: "Done.", observationIds: [], answersObjective: "FULLY" } },
       { expect: "VERIFY", reply: verdictsAllMet(["The answer is given"]) },
     );
     ctx.setForwarding(false); // drop every notification during the run

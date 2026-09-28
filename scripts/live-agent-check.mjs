@@ -53,15 +53,23 @@ let taskId = null;
 let finish;
 const finished = new Promise((r) => (finish = r));
 
+/** Grounded criteria as the runtime accepted them: requirement, the objective's words, evidence hint. */
+function describeCriteria(p) {
+  if (!p.criteria) return `           criteria: ${p.successCriteria.join(" | ")}`;
+  return p.criteria
+    .map((c) => `           criterion: ${c.requirement}${c.required ? "" : " (optional)"}\n             from objective: "${c.objectiveBasis}" · evidence hint: ${c.evidence || "-"} · by ${c.verifiableBy}${c.revisionOf ? ` · revises ${c.revisionOf}` : ""}`)
+    .join("\n");
+}
+
 function describe(e) {
   const p = e.payload;
   switch (e.type) {
     case "PLAN_CREATED":
-      return `${p.summary}\n${p.steps.map((s) => `           ${s.ordinal + 1}. ${s.title}`).join("\n")}\n           criteria: ${p.successCriteria.join(" | ")}`;
+      return `${p.summary}\n${p.steps.map((s) => `           ${s.ordinal + 1}. ${s.title}`).join("\n")}\n${describeCriteria(p)}`;
     case "MODEL_INVOKED":
       return `${p.purpose} → ${p.providerModelId} (attempt ${p.attempt})`;
     case "MODEL_RESPONDED":
-      return `${p.purpose} ${p.outcome} in ${p.latencyMs}ms (${p.inputTokens ?? "?"} in / ${p.outputTokens ?? "?"} out)`;
+      return `${p.purpose} ${p.outcome} in ${p.latencyMs}ms (${p.inputTokens ?? "?"} in / ${p.outputTokens ?? "?"} out)${p.problem ? `\n           rejected: ${p.problem}` : ""}`;
     case "TOOL_REQUESTED":
       return `${p.toolId} ${JSON.stringify(p.input)}`;
     case "TOOL_PERMISSION_REQUIRED":
@@ -73,13 +81,13 @@ function describe(e) {
     case "OBSERVATION_CREATED":
       return `${p.observationId} ${p.summary}`;
     case "VERIFICATION_PASSED":
-      return p.evidence.join(" | ");
+      return `${p.outcome ?? ""} ${p.evidence.join(" | ")}`;
     case "VERIFICATION_FAILED":
-      return p.reasons.join(" | ");
+      return `${p.outcome ?? ""} ${p.reasons.join(" | ")}`;
     case "PLAN_REPLAN_REQUESTED":
-      return `plan v${p.planVersion}: ${p.reason} (evidence: ${p.observationIds.join(", ") || "none"})`;
+      return `[${p.trigger ?? "EXECUTION"}] plan v${p.planVersion}: ${p.reason} (evidence: ${p.observationIds.join(", ") || "none"})`;
     case "PLAN_UPDATED":
-      return `v${p.previousVersion} → v${p.planVersion}: ${p.reason}\n${p.steps.map((s, i) => `           ${i + 1}. ${s.title}`).join("\n")}\n           kept: ${p.keptStepIds.length}, superseded: ${p.supersededStepIds.length}, failed: ${p.failedStepIds.length}`;
+      return `[${p.trigger ?? "EXECUTION"}] v${p.previousVersion} → v${p.planVersion}: ${p.reason}\n${p.steps.map((s, i) => `           ${i + 1}. ${s.title}`).join("\n")}\n           kept: ${p.keptStepIds.length}, superseded: ${p.supersededStepIds.length}, failed: ${p.failedStepIds.length}, revised criteria: ${p.revisedCriterionIds?.length ?? 0}\n${describeCriteria(p)}`;
     case "PLAN_REPLAN_REJECTED":
       return `plan v${p.planVersion} kept: ${p.reason}`;
     case "ARTIFACT_CREATED":
@@ -130,8 +138,15 @@ try {
   if (detail.task.result) {
     console.log(`ANSWER  ${detail.task.result.answer}`);
     console.log(`CITES   ${detail.task.result.observationIds.join(", ") || "(none)"}`);
-    console.log(`VERIFIED ${detail.task.result.verification.passed}`);
-    for (const r of detail.task.result.verification.reasons) console.log(`  ✗ ${r}`);
+    const v = detail.task.result.verification;
+    console.log(`VERIFIED ${v.passed}${v.outcome ? ` (${v.outcome})` : ""}`);
+    for (const c of v.criteria ?? []) {
+      console.log(`  ${c.status === "SATISFIED" ? "✓" : "✗"} ${c.requirement} → ${c.status}${c.modelStatus !== c.status ? ` (model said ${c.modelStatus})` : ""}${c.note ? ` — ${c.note}` : ""}`);
+      if (c.finding) console.log(`      answer's finding: "${c.finding}"`);
+      for (const ev of c.evidence) console.log(`      evidence ${ev.observationId}: "${ev.excerpt}"`);
+      if (c.assessment) console.log(`      model's assessment: ${c.assessment}`);
+    }
+    for (const r of v.reasons) console.log(`  ✗ ${r}`);
   }
   console.log(`steps: ${detail.steps.map((s) => `${s.title} [${s.status}]`).join("; ")}`);
   console.log(`tool calls: ${detail.executions.map((e) => `${e.toolId}=${e.status}`).join(", ") || "none"}`);

@@ -308,7 +308,7 @@
 }
 .tv-check {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 128px 1fr;
   gap: var(--m-space-3);
   align-items: baseline;
   padding: var(--m-space-2) 0;
@@ -316,6 +316,12 @@
   font-size: var(--m-type-body-small-size);
   line-height: var(--m-type-body-small-line);
   color: var(--m-color-text-primary);
+}
+/* Direct evidence: an excerpt MORROW found verbatim in a cited observation. */
+.tv-evidence {
+  margin-top: var(--m-space-1);
+  color: var(--m-color-text-secondary);
+  overflow-wrap: anywhere;
 }
 .tv-cites {
   margin-top: var(--m-space-3);

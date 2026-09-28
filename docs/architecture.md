@@ -89,8 +89,10 @@ and Vitest compile them directly, so there is no per-package build step.
 ```
 USER INTENT ─ task.create ─▶ TASK (IDLE)
   PLANNING     ContextBuilder: objective, project, usable tools, active memories, platform/time
-               ModelGateway(PLAN) → ModelPlanner → {summary, steps[], successCriteria[]}
-               plan version 1 → plans; steps → task_steps; PLAN_CREATED
+               ModelGateway(PLAN) → ModelPlanner → {summary, steps[], criteria[]}
+               criteria grounded in the objective (runtime-checked; see Grounded verification)
+               plan version 1 (the objective's own criterion + the planner's) → plans;
+               steps → task_steps; PLAN_CREATED
                (or, with a replan pending: ModelPlanner.replan → new plan version)
   EXECUTING    per step of the current plan version: ModelGateway(DECIDE) → ActionDecider →
                  call_tool      → StepExecutor → ToolRuntime → permission gate → tool → observation
@@ -99,12 +101,14 @@ USER INTENT ─ task.create ─▶ TASK (IDLE)
                  cannot_proceed → step FAILED → task FAILED (CANNOT_PROCEED)
   OBSERVING    → EXECUTING (the decider sees every result, success or failure)
   RECOVERING   after a denial/failure: decideRecovery → back to EXECUTING, or FAILED
-  VERIFYING    ModelGateway(COMPOSE) → ResultJudge.compose → {answer, observationIds}
-               ModelGateway(VERIFY)  → ResultJudge.judge   → verdict per criterion
-               Verifier + taskCriteria: every step completed; cited observations exist;
-               a "met" verdict must cite real evidence when tools produced any
-  RESULT       COMPLETED with TaskResult (answer, evidence, verification), or
-               FAILED (VERIFICATION_FAILED) with the unverified answer kept for the user
+  VERIFYING    ModelGateway(COMPOSE) → ResultJudge.compose → {answer, observationIds, answersObjective}
+               ModelGateway(VERIFY)  → ResultJudge.judge   → verdict per criterion, with
+                                       excerpts quoted from the observations it cites
+               evaluateVerification: structural checks + a verdict counts as SATISFIED only
+               with an excerpt MORROW finds in a real observation → outcome
+  RESULT       COMPLETED (VERIFIED) with TaskResult (answer, evidence, per-criterion verdicts),
+               FAILED (VERIFICATION_FAILED / INSUFFICIENT_EVIDENCE / CRITERIA_INVALID) with the
+               unverified answer kept, or — criteria invalid, replans left — PLANNING to revise them
   MEMORY       on completion: an EPISODIC memory is PROPOSED with the evidence; the user accepts or rejects it
 ```
 
@@ -165,7 +169,44 @@ PLANNING ─ open replan request → ModelPlanner.replan → ReplanProposal (Zod
   replanned resumes under its active version without planning again.
 - **Verification** checks the current plan version's steps and success criteria.
   Superseded or invalidated steps of earlier versions don't fail verification.
+- **Criteria survive replans.** An execution replan changes the route to the evidence,
+  never what counts as success: the proposal has no criteria field, and the runtime copies
+  the criteria (same ids) into the new version. Criteria change only through a
+  verification-triggered revision (below).
 - **Memory.** A replan never creates memory. The existing completion-time proposal is unchanged.
+
+### Grounded verification
+
+Verification answers "did MORROW accomplish what the user asked?", from evidence MORROW
+can check itself. Decisions D55–D60 have the details.
+
+```
+OBJECTIVE ─▶ criteria (model proposes; runtime grounds: basis = the user's words,
+             requirement introduces no specific the objective lacks)
+             + the objective itself as a required criterion (runtime-owned)
+          ─▶ PLAN ─▶ EXECUTION ─▶ OBSERVATIONS
+          ─▶ RESULT {answer, observationIds, answersObjective}
+          ─▶ VERIFICATION: per criterion SATISFIED / NOT_SATISFIED / INSUFFICIENT_EVIDENCE /
+             CRITERION_INVALID, each SATISFIED backed by an excerpt found in a cited observation
+             outcome: VERIFIED · NOT_VERIFIED · INSUFFICIENT_EVIDENCE · CRITERIA_INVALID
+             CRITERIA_INVALID (replans left) → PLAN_REPLAN_REQUESTED (trigger VERIFICATION)
+               → planner replaces exactly the invalid criteria → runtime validates → new plan
+               version (completed steps kept) → VERIFYING again
+```
+
+- **Criterion.** `requirement` (binding, judged), `objectiveBasis` (the user's words,
+  verbatim), `evidence` (a hint about where to look; it never decides), `verifiableBy`
+  (OBSERVATION or ANSWER), `required`, `revisionOf`, `origin` (OBJECTIVE or PLAN). Stored
+  per plan version in `plans.criteria`.
+- **The objective's verdict names the answer's finding** (at most 4 words, quoted from the answer). Each of its words must be in the objective or in the values the cited observations returned, and at least one must be in those values; otherwise the objective is not shown (D61).
+- **Direct evidence vs. interpretation.** A verdict's excerpts are direct evidence, found
+  by MORROW in the observations. Its explanation is the model's interpretation. Results
+  and the UI keep the two apart.
+- **Honest failure.** Ungrounded criteria that survive the correction attempt fail
+  planning (`INVALID_MODEL_OUTPUT`). Fabricated evidence that survives it means
+  verification could not run (NOT_VERIFIED). Nothing is repaired or waived.
+- **Old tasks.** Plans made before migration 0004 have no structured criteria. They are
+  verified against their plain statements as before, and are never revised.
 
 ### Model gateway
 
@@ -200,7 +241,7 @@ runtime tables + event log ─ task.detail / events.list ─▶ TaskWorkspace (U
 - **`task.detail`** (`agent/src/host/task-detail.ts`) assembles one task's state from
   the runtime's tables:
   - task and project;
-  - plan (from `PLAN_CREATED`) and steps;
+  - plan versions (from `plans`, with their criteria) and steps;
   - tool executions and permission requests;
   - observations and artifacts;
   - memories with their sources;
@@ -217,8 +258,10 @@ runtime tables + event log ─ task.detail / events.list ─▶ TaskWorkspace (U
   - header: task id, objective, project, state, elapsed time, model and provider, current phase;
   - decisions: pending permission requests and memory proposals;
   - result;
-  - plan and success criteria;
-  - verification, with each check labelled as checked by MORROW or judged by the model;
+  - plan and success criteria, each with the words of the objective it comes from;
+  - verification: the outcome; each check labelled as checked by MORROW or judged by the
+    model; per criterion, its verdict, the direct evidence (excerpts with their
+    observation ids) and, separately, the model's assessment;
   - observations;
   - artifacts;
   - activity timeline, where tool calls expand to show tool, input, permission,
