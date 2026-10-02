@@ -35,6 +35,59 @@ export const color = {
   warningMuted: "rgba(212, 154, 90, 0.12)",
   errorMuted: "rgba(208, 112, 106, 0.12)",
   infoMuted: "rgba(138, 164, 191, 0.12)",
+
+  /**
+   * Material: translucent planes the environment shows through. Restrained glass —
+   * low alpha over a backdrop blur, never frosted slabs.
+   */
+  glass: "rgba(18, 19, 22, 0.58)",
+  glassRaised: "rgba(23, 25, 28, 0.72)",
+  glassDeep: "rgba(8, 9, 10, 0.62)",
+  /** The faint top edge light catches on a raised plane. */
+  hairline: "rgba(230, 227, 220, 0.06)",
+  /** Hover/press wash on interactive rows. */
+  wash: "rgba(230, 227, 220, 0.035)",
+  scrim: "rgba(5, 6, 7, 0.6)",
+
+  /** The environment: a cool grey smoke, and the faint lift of the floor toward the light. */
+  smoke: "#7c8089",
+  smokeDeep: "#545862",
+  floorLift: "#16181b",
+} as const;
+
+/** Depth: elevation pairs an outer shadow with an inset top highlight. */
+export const elevation = {
+  e0: "none",
+  e1: "0 1px 0 0 rgba(230, 227, 220, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.35)",
+  e2: "0 1px 0 0 rgba(230, 227, 220, 0.05) inset, 0 8px 24px -8px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35)",
+  e3: "0 1px 0 0 rgba(230, 227, 220, 0.06) inset, 0 24px 64px -16px rgba(0, 0, 0, 0.7), 0 4px 12px rgba(0, 0, 0, 0.4)",
+  /** Recessed into the plane (input fields, wells). */
+  inset: "0 1px 2px rgba(0, 0, 0, 0.5) inset",
+} as const;
+
+/** Backdrop blur for materials. */
+export const blur = {
+  panel: "18px",
+  overlay: "28px",
+} as const;
+
+/** Control and icon sizes: one scale for every interactive element. */
+export const size = {
+  controlSm: "28px",
+  control: "32px",
+  controlLg: "40px",
+  iconSm: "14px",
+  icon: "16px",
+  iconLg: "20px",
+} as const;
+
+/** Fixed dimensions of the application shell. */
+export const layout = {
+  railWidth: "72px",
+  barHeight: "48px",
+  panelWidth: "300px",
+  readingWidth: "760px",
+  contentWidth: "1120px",
 } as const;
 
 export const font = {
@@ -76,17 +129,23 @@ export const space = {
   24: "96px",
 } as const;
 
-/** Restrained geometry: architectural edges, not pills and bubbles. */
+/**
+ * Restrained geometry: architectural edges, not pills and bubbles. Controls stay
+ * crisp (xs–md); only panels, the planes content sits on, soften (lg, xl).
+ */
 export const radius = {
   none: "0",
   xs: "2px",
   sm: "3px",
   md: "4px",
+  lg: "6px",
+  xl: "10px",
 } as const;
 
 export const layer = {
   environment: 0,
   shell: 10,
+  raised: 20,
   overlay: 100,
   boot: 1000,
 } as const;

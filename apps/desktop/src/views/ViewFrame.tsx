@@ -1,14 +1,22 @@
 import type { ReactNode } from "react";
-import { EmptyState } from "@morrow/ui";
+import { EmptyState, ErrorState, Icon, Progress } from "@morrow/ui";
 import { useMorrow } from "../runtime/store";
 import type { Resource } from "../runtime/use-resource";
+import { SECTION_META, useSection } from "../shell/navigation";
 
+/** A section's page: its glyph, title and what it is for, then glass panels of content. */
 export function ViewFrame({ title, lede, children }: { title: string; lede?: string; children: ReactNode }) {
+  const section = useSection();
   return (
     <div className="view">
-      <header>
-        <h2 className="view__title">{title}</h2>
-        {lede ? <p className="view__lede">{lede}</p> : null}
+      <header className="view__header">
+        <span className="view__glyph" aria-hidden="true">
+          <Icon name={SECTION_META[section].icon} size="lg" />
+        </span>
+        <div>
+          <h2 className="view__title">{title}</h2>
+          {lede ? <p className="view__lede">{lede}</p> : null}
+        </div>
       </header>
       {children}
     </div>
@@ -21,8 +29,8 @@ export function WithResource<T>({ resource, children }: { resource: Resource<T>;
   if (!connected) {
     return <EmptyState title="Runtime not connected">This information comes from the agent runtime, which is not running.</EmptyState>;
   }
-  if (resource.status === "loading") return <EmptyState title="Loading" />;
-  if (resource.status === "error") return <EmptyState title="Could not load">{resource.message}</EmptyState>;
+  if (resource.status === "loading") return <Progress label="Loading" />;
+  if (resource.status === "error") return <ErrorState title="Could not load">{resource.message}</ErrorState>;
   return <>{children(resource.data)}</>;
 }
 

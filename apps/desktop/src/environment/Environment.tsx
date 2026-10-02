@@ -8,7 +8,7 @@ import "./environment.css";
  * The space MORROW lives in. Purely presentational: it receives no data other
  * than the ambient state derived from real runtime activity.
  *
- * Layers (back to front): deep base · distant structure · fog · illumination ·
+ * Layers (back to front): deep base · distant structure · fog and smoke · illumination ·
  * texture · vignette. Each state maps to a few normalised parameters; CSS
  * transitions carry the environment between them.
  */
@@ -36,6 +36,7 @@ export function Environment() {
         <div className="env__horizon" />
       </div>
       <div className="env__fog env__fog--far" />
+      <div className="env__smoke" />
       <div className="env__fog env__fog--near" />
       <div className="env__light" />
       <div className="env__texture" />

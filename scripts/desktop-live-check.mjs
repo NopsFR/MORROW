@@ -38,7 +38,10 @@ const log = (m) => console.log(`+${((Date.now() - t0) / 1000).toFixed(1)}s ${m}`
 
 // 0. Optionally cancel tasks left open by earlier runs (--cancel-open).
 if (args.includes("--cancel-open")) {
-  await nav.getByRole("button", { name: /WORKSPACE/ }).click();
+  await nav.getByRole("button", { name: /workspace/i }).click();
+  // The full history is a panel opened from the presence bar.
+  const history = page.getByRole("button", { name: "Task history" });
+  if ((await history.getAttribute("aria-pressed")) !== "true") await history.click();
   const rail = page.getByRole("navigation", { name: "Tasks" });
   const items = rail.locator(".task-rail__item");
   for (let i = 0; i < (await items.count()); i++) {
@@ -54,7 +57,7 @@ if (args.includes("--cancel-open")) {
 
 // 1. Project with the workspace directory.
 const projectName = `live ${new Date().toISOString().slice(11, 19)}`;
-await nav.getByRole("button", { name: /PROJECTS/ }).click();
+await nav.getByRole("button", { name: /projects/i }).click();
 await page.getByLabel(/^Name/).fill(projectName);
 await page.getByLabel(/Workspace directory/).fill(workspace);
 await page.getByRole("button", { name: "Create project" }).click();
@@ -62,7 +65,7 @@ await page.getByText(projectName).waitFor();
 log(`project "${projectName}" created`);
 
 // 2. Submit the objective, scoped to the project. The new task opens in the task view.
-await nav.getByRole("button", { name: /WORKSPACE/ }).click();
+await nav.getByRole("button", { name: /workspace/i }).click();
 await page.locator(".command__scope select").selectOption({ label: projectName });
 const field = page.getByRole("textbox", { name: "Objective" });
 await field.fill(objective);

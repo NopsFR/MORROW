@@ -24,11 +24,11 @@ test.describe("MORROW shell outside the desktop runtime", () => {
     const nav = page.getByRole("navigation", { name: "MORROW" });
     await expect(nav).toBeVisible({ timeout: 10_000 });
     for (const section of ["PROJECTS", "MEMORY", "TOOLS", "MODELS", "SYSTEM"]) {
-      await nav.getByRole("button", { name: new RegExp(section) }).click();
-      await expect(nav.getByRole("button", { name: new RegExp(section) })).toHaveAttribute("aria-current", "page");
+      await nav.getByRole("button", { name: new RegExp(section, "i") }).click();
+      await expect(nav.getByRole("button", { name: new RegExp(section, "i") })).toHaveAttribute("aria-current", "page");
     }
     await expect(page.getByRole("heading", { name: "System" })).toBeVisible();
-    await nav.getByRole("button", { name: /TOOLS/ }).click();
+    await nav.getByRole("button", { name: /tools/i }).click();
     await expect(page.getByText("Runtime not connected").first()).toBeVisible();
   });
 
@@ -52,7 +52,31 @@ test.describe("MORROW shell outside the desktop runtime", () => {
   test("respects reduced motion", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
-    const drift = await page.locator(".env__fog--far").evaluate((el) => getComputedStyle(el).animationName);
-    expect(drift).toBe("none");
+    for (const layer of [".env__fog--far", ".env__smoke", ".env__fog--near"]) {
+      const drift = await page.locator(layer).evaluate((el) => getComputedStyle(el).animationName);
+      expect(drift, layer).toBe("none");
+    }
+  });
+
+  test("the presence bar reports real state and every rail section is reachable by keyboard", async ({ page }) => {
+    await page.goto("/");
+    const nav = page.getByRole("navigation", { name: "MORROW" });
+    await expect(nav).toBeVisible({ timeout: 10_000 });
+    const bar = page.locator("header.presence-bar");
+    await expect(bar).toContainText("Workspace");
+    await expect(bar).toContainText("Native layer unavailable");
+    // Nothing to show, so no history toggle and no decisions count.
+    await expect(page.getByRole("button", { name: "Task history" })).toHaveCount(0);
+    await expect(bar.getByText("Decisions")).toHaveCount(0);
+
+    const workspace = nav.getByRole("button", { name: /workspace/i });
+    await workspace.focus();
+    await page.keyboard.press("Tab");
+    await expect(nav.getByRole("button", { name: /projects/i })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(nav.getByRole("button", { name: /projects/i })).toHaveAttribute("aria-current", "page");
+    await expect(bar).toContainText("Projects");
+    const outline = await nav.getByRole("button", { name: /projects/i }).evaluate((el) => getComputedStyle(el).outlineStyle);
+    expect(outline).not.toBe("none");
   });
 });

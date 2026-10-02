@@ -103,6 +103,9 @@ async function openTask(taskId, objective) {
   d.close();
   const index = order.indexOf(taskId);
   if (index === -1) throw new Error(`${taskId} is not among the 40 newest tasks the rail shows`);
+  // The full history is a panel opened from the presence bar.
+  const history = page.getByRole("button", { name: "Task history" });
+  if ((await history.getAttribute("aria-pressed")) !== "true") await history.click();
   const item = page.locator(".task-rail__item").nth(index);
   await item.waitFor({ timeout: 20_000 });
   const title = await item.locator(".task-rail__title").innerText();
@@ -150,12 +153,12 @@ if (!objective || !workspace) {
 
 // 1. Project + objective through the UI.
 const projectName = `verify ${new Date().toISOString().slice(11, 19)}`;
-await nav.getByRole("button", { name: /PROJECTS/ }).click();
+await nav.getByRole("button", { name: /projects/i }).click();
 await page.getByLabel(/^Name/).fill(projectName);
 await page.getByLabel(/Workspace directory/).fill(workspace);
 await page.getByRole("button", { name: "Create project" }).click();
 await page.getByText(projectName).waitFor();
-await nav.getByRole("button", { name: /WORKSPACE/ }).click();
+await nav.getByRole("button", { name: /workspace/i }).click();
 await page.locator(".command__scope select").selectOption({ label: projectName });
 const field = page.getByRole("textbox", { name: "Objective" });
 const knownIds = (() => {

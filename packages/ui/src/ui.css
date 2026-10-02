@@ -1,5 +1,59 @@
 /* MORROW UI primitives. Every value comes from design tokens (--m-*). */
 
+/*
+ * Focus: one treatment for every interactive element — a 1px brass line, offset so it
+ * never touches content. Only for keyboard focus (:focus-visible).
+ */
+.m-focus:focus-visible,
+.m-button:focus-visible,
+.m-icon-button:focus-visible {
+  outline: 1px solid var(--m-color-accent-line);
+  outline-offset: 2px;
+}
+
+/* Icons inherit colour; size from tokens. */
+.m-icon {
+  flex: none;
+  display: block;
+}
+.m-icon--sm { width: var(--m-size-icon-sm); height: var(--m-size-icon-sm); }
+.m-icon--md { width: var(--m-size-icon); height: var(--m-size-icon); }
+.m-icon--lg { width: var(--m-size-icon-lg); height: var(--m-size-icon-lg); }
+
+/*
+ * Panel material. Glass is restrained: a low-alpha plane over a backdrop blur with a
+ * hairline top edge, so the environment stays present behind content.
+ */
+.m-panel {
+  position: relative;
+  border: 1px solid var(--m-color-border-subtle);
+  border-radius: var(--m-radius-lg);
+}
+.m-panel--glass {
+  background: var(--m-color-glass);
+  backdrop-filter: blur(var(--m-blur-panel)) saturate(110%);
+  box-shadow: var(--m-elevation-e1);
+}
+.m-panel--raised {
+  background: var(--m-color-glass-raised);
+  backdrop-filter: blur(var(--m-blur-overlay)) saturate(110%);
+  border-color: var(--m-color-border);
+  box-shadow: var(--m-elevation-e2);
+}
+.m-panel--inset {
+  background: color-mix(in srgb, var(--m-color-surface-inset) 80%, transparent);
+  box-shadow: var(--m-elevation-inset);
+  border-radius: var(--m-radius-md);
+}
+.m-panel--plain {
+  background: transparent;
+  border-color: transparent;
+}
+.m-panel--pad-none { padding: 0; }
+.m-panel--pad-sm { padding: var(--m-space-3) var(--m-space-4); }
+.m-panel--pad-md { padding: var(--m-space-5) var(--m-space-6); }
+.m-panel--pad-lg { padding: var(--m-space-8) var(--m-space-10); }
+
 .m-surface {
   position: relative;
   border: 1px solid var(--m-color-border-subtle);
@@ -93,7 +147,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--m-space-2);
-  height: 28px;
+  height: var(--m-size-control);
   padding: 0 var(--m-space-3);
   border: 1px solid var(--m-color-border);
   border-radius: var(--m-radius-xs);
@@ -109,13 +163,17 @@
     border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
     background-color var(--m-motion-fast-duration) var(--m-motion-fast-easing);
 }
+.m-button--sm {
+  height: var(--m-size-control-sm);
+  padding: 0 var(--m-space-2);
+}
 .m-button:hover:not(:disabled) {
   color: var(--m-color-text-primary);
   border-color: var(--m-color-border-strong);
+  background: var(--m-color-wash);
 }
-.m-button:focus-visible {
-  outline: 1px solid var(--m-color-accent-line);
-  outline-offset: 2px;
+.m-button:active:not(:disabled) {
+  background: var(--m-color-hairline);
 }
 .m-button:disabled {
   color: var(--m-color-text-disabled);
@@ -133,6 +191,107 @@
 .m-button--danger:hover:not(:disabled) {
   color: var(--m-color-error);
   border-color: var(--m-color-error);
+}
+.m-button--ghost {
+  border-color: transparent;
+}
+
+/* Icon-only control: square, quiet until hovered. */
+.m-icon-button {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--m-size-control);
+  height: var(--m-size-control);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--m-radius-md);
+  background: transparent;
+  color: var(--m-color-text-muted);
+  cursor: pointer;
+  transition:
+    color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
+    background-color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
+    border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing);
+}
+.m-icon-button:hover:not(:disabled) {
+  color: var(--m-color-text-primary);
+  background: var(--m-color-wash);
+  border-color: var(--m-color-border-subtle);
+}
+.m-icon-button[aria-pressed="true"] {
+  color: var(--m-color-accent);
+}
+.m-icon-button:disabled {
+  color: var(--m-color-text-disabled);
+  cursor: default;
+}
+
+.m-kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 var(--m-space-1);
+  border: 1px solid var(--m-color-border);
+  border-bottom-width: 2px;
+  border-radius: var(--m-radius-sm);
+  font-family: var(--m-font-mono);
+  font-size: var(--m-type-micro-size);
+  line-height: 16px;
+  text-align: center;
+  color: var(--m-color-text-secondary);
+}
+
+.m-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--m-radius-sm);
+  font-family: var(--m-font-mono);
+  font-size: var(--m-type-micro-size);
+  line-height: 16px;
+  text-align: center;
+  color: var(--m-color-background);
+  background: var(--m-color-text-muted);
+}
+.m-count--accent { background: var(--m-color-accent); }
+.m-count--warning { background: var(--m-color-warning); }
+.m-count--error { background: var(--m-color-error); }
+.m-count--success { background: var(--m-color-success); }
+.m-count--info { background: var(--m-color-info); }
+
+/* Error state: like emptiness, but something went wrong. */
+.m-error {
+  padding: var(--m-space-4) 0;
+  display: grid;
+  gap: var(--m-space-2);
+}
+.m-error__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--m-space-2);
+  color: var(--m-color-error);
+}
+
+/* Real, in-flight loading: an indeterminate hairline. */
+.m-progress {
+  position: relative;
+  height: 1px;
+  overflow: hidden;
+  background: var(--m-color-border-subtle);
+}
+.m-progress__bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: var(--m-color-accent-line);
+  animation: m-progress calc(var(--m-motion-long-duration) * 3) var(--m-motion-medium-easing) infinite;
+}
+@keyframes m-progress {
+  from { translate: -100% 0; }
+  to { translate: 340% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-progress__bar { animation: none; width: 100%; opacity: 0.4; }
 }
 
 /* Key/value */
@@ -176,6 +335,9 @@
   align-items: center;
   gap: var(--m-space-3);
   margin-bottom: var(--m-space-4);
+}
+.m-section-header__icon {
+  color: var(--m-color-text-muted);
 }
 .m-section-header__line {
   flex: 1;

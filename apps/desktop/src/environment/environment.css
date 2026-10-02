@@ -1,6 +1,8 @@
 /*
- * MORROW environment.
- * Restraint is the point: every layer sits a few percent above the base.
+ * MORROW environment: the space the shell's glass planes sit in.
+ * Restraint is the point: every layer sits a few percent above the base, and only
+ * real runtime state (the ambient parameters) moves it. Colours are tokens; the
+ * strength of each layer is an opacity driven by those parameters.
  * State parameters are registered custom properties so they interpolate.
  */
 
@@ -12,7 +14,7 @@
 .env {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: var(--m-layer-environment);
   overflow: hidden;
   pointer-events: none;
   background: var(--m-color-background-deep);
@@ -30,8 +32,12 @@
 
 /* Deep base: charcoal lifting very slightly toward a low focal region. */
 .env__base {
-  background:
-    radial-gradient(120% 80% at 50% 78%, #15171a 0%, #0e0f11 45%, var(--m-color-background-deep) 100%);
+  background: radial-gradient(
+    120% 80% at 50% 78%,
+    var(--m-color-floor-lift) 0%,
+    var(--m-color-background) 45%,
+    var(--m-color-background-deep) 100%
+  );
 }
 
 /* Distant structure: a floor plane receding to a horizon, barely visible. */
@@ -49,8 +55,9 @@
   transform-origin: 50% 0%;
   transform: perspective(700px) rotateX(78deg);
   background-image:
-    repeating-linear-gradient(90deg, rgba(168, 165, 158, 0.07) 0 1px, transparent 1px 88px),
-    repeating-linear-gradient(0deg, rgba(168, 165, 158, 0.06) 0 1px, transparent 1px 88px);
+    repeating-linear-gradient(90deg, var(--m-color-text-secondary) 0 1px, transparent 1px 88px),
+    repeating-linear-gradient(0deg, var(--m-color-text-secondary) 0 1px, transparent 1px 88px);
+  opacity: 0.065;
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent 70%);
   animation: env-flow calc(var(--env-drift) * 0.5) linear infinite;
   animation-play-state: paused;
@@ -67,39 +74,57 @@
   top: 64%;
   bottom: auto;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgba(201, 181, 138, calc(0.05 + var(--env-illumination) * 0.12)) 35%,
-    rgba(201, 181, 138, calc(0.05 + var(--env-illumination) * 0.12)) 65%,
-    transparent
-  );
+  background: linear-gradient(to right, transparent, var(--m-color-accent) 35%, var(--m-color-accent) 65%, transparent);
+  opacity: calc(0.05 + var(--env-illumination) * 0.12);
 }
 
-/* Atmospheric fog: two slow, broad banks. */
+/*
+ * Atmosphere: far fog banks, a slow smoke that rises through the middle distance,
+ * and a near bank pooled at the floor. Broad and blurred; never a pattern.
+ */
 .env__fog {
   filter: blur(40px);
   opacity: var(--env-fog);
 }
 .env__fog--far {
   background:
-    radial-gradient(60% 30% at 30% 60%, rgba(120, 124, 132, 0.10), transparent 70%),
-    radial-gradient(50% 26% at 72% 58%, rgba(120, 124, 132, 0.08), transparent 70%);
+    radial-gradient(60% 30% at 30% 60%, var(--m-color-smoke), transparent 70%),
+    radial-gradient(50% 26% at 72% 58%, var(--m-color-smoke), transparent 70%);
+  opacity: calc(var(--env-fog) * 0.42);
   animation: env-drift var(--env-drift) var(--m-motion-ambient-easing) infinite alternate;
 }
+/* Overscanned so its drift never reveals an edge (beats `.env > div`). */
+.env > .env__smoke {
+  inset: -20% -10%;
+}
+.env__smoke {
+  filter: blur(64px);
+  background:
+    radial-gradient(28% 34% at 22% 70%, var(--m-color-smoke), transparent 70%),
+    radial-gradient(24% 40% at 58% 62%, var(--m-color-smoke-deep), transparent 72%),
+    radial-gradient(30% 26% at 84% 40%, var(--m-color-smoke-deep), transparent 70%),
+    radial-gradient(22% 22% at 40% 28%, var(--m-color-smoke), transparent 70%);
+  opacity: calc(var(--env-fog) * 0.38);
+  animation: env-rise calc(var(--env-drift) * 2.5) var(--m-motion-ambient-easing) infinite alternate;
+}
 .env__fog--near {
-  background: radial-gradient(90% 40% at 50% 100%, rgba(90, 94, 102, 0.12), transparent 70%);
+  background: radial-gradient(90% 40% at 50% 100%, var(--m-color-smoke-deep), transparent 70%);
+  opacity: calc(var(--env-fog) * 0.6);
   animation: env-drift var(--env-drift) var(--m-motion-ambient-easing) infinite alternate-reverse;
 }
 @keyframes env-drift {
   from { transform: translate3d(-1.5%, 0, 0); }
   to { transform: translate3d(1.5%, -0.8%, 0); }
 }
+@keyframes env-rise {
+  from { transform: translate3d(-2%, 3%, 0) scale(1); }
+  to { transform: translate3d(2%, -3%, 0) scale(1.06); }
+}
 
 /* A single, distant, warm light low on the horizon. */
 .env__light {
-  background: radial-gradient(38% 22% at 50% 64%, rgba(201, 181, 138, 0.16), transparent 70%);
-  opacity: var(--env-illumination);
+  background: radial-gradient(38% 22% at 50% 64%, var(--m-color-accent), transparent 70%);
+  opacity: calc(var(--env-illumination) * 0.3);
 }
 
 /* Film grain so flat surfaces read as material, not screen. */
@@ -110,7 +135,7 @@
 }
 
 .env__vignette {
-  background: radial-gradient(130% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(130% 100% at 50% 50%, transparent 55%, var(--m-color-scrim) 100%);
 }
 
 /* FAILED: a brief destabilisation of the structure, then recovery. */
@@ -128,6 +153,7 @@
 @media (prefers-reduced-motion: reduce) {
   .env__floor,
   .env__fog--far,
+  .env__smoke,
   .env__fog--near,
   .env[data-ambient="FAILED"] .env__structure {
     animation: none;

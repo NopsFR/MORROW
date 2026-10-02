@@ -29,6 +29,7 @@ import {
   type RuntimeStatus,
 } from "./bridge";
 import { TaskWorkspace, type TaskWorkspaceState } from "./task-workspace";
+import { summarizeModels, type ModelSummary } from "./presence";
 
 export type BootPhase = "INITIALIZING" | "READY" | "DEGRADED";
 
@@ -42,7 +43,11 @@ export interface MorrowState {
   };
   readonly tasks: readonly Task[];
   readonly pendingPermissions: readonly PermissionRequest[];
+  /** What the models subsystem reports (null until the runtime has answered). */
+  readonly models: ModelSummary | null;
   readonly inputFocused: boolean;
+  /** Whether the full task history panel is open beside the workspace (view state only). */
+  readonly historyOpen: boolean;
   readonly transient: { readonly state: "FAILED" | "COMPLETED"; readonly until: number } | null;
   /** Last user-facing failure of an action (not of a task). */
   readonly notice: { readonly code: string; readonly message: string } | null;
@@ -54,7 +59,9 @@ let state: MorrowState = {
   boot: { phase: "INITIALIZING", checks: {}, dismissed: false },
   tasks: [],
   pendingPermissions: [],
+  models: null,
   inputFocused: false,
+  historyOpen: false,
   transient: null,
   notice: null,
 };
@@ -152,7 +159,7 @@ export async function initialize(): Promise<void> {
   } catch (error) {
     recordChecks(unavailableChecks(RUNTIME_SUBSYSTEMS, describe(error)).map((c) => ({ ...c, status: "FAILED" as const })));
   }
-  await Promise.all([refreshTasks(), refreshPermissions()]);
+  await Promise.all([refreshTasks(), refreshPermissions(), refreshModels()]);
   // Open the most recent task that still needs attention, if any.
   const open = state.tasks.find((t) => !["COMPLETED", "FAILED", "CANCELLED"].includes(t.status));
   if (open) void taskWorkspace.select(open.id);
@@ -211,6 +218,18 @@ export async function refreshTasks(): Promise<void> {
   }
 }
 
+/**
+ * Mirror what the models subsystem reports. `probe` asks providers again (as the
+ * Models view's "Check again" does); otherwise the runtime's current view is read.
+ */
+export async function refreshModels(probe = false): Promise<void> {
+  try {
+    set({ models: summarizeModels(await request(probe ? "models.refresh" : "models.status")) });
+  } catch (error) {
+    report(error);
+  }
+}
+
 export async function refreshPermissions(): Promise<void> {
   try {
     set({ pendingPermissions: await request("permission.listPending") });
@@ -256,6 +275,10 @@ export async function respondToPermission(
 
 export function setInputFocused(inputFocused: boolean): void {
   if (state.inputFocused !== inputFocused) set({ inputFocused });
+}
+
+export function setHistoryOpen(historyOpen: boolean): void {
+  if (state.historyOpen !== historyOpen) set({ historyOpen });
 }
 
 export function clearNotice(): void {

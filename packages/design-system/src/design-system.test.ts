@@ -22,6 +22,24 @@ describe("design tokens", () => {
     expect(vars["--m-motion-medium-duration"]).toBe("280ms");
     expect(tokenStylesheet()).toContain("prefers-reduced-motion: reduce");
   });
+
+  it("emits the material, depth and size foundation", () => {
+    const vars = cssVariables();
+    for (const name of [
+      "--m-color-glass", "--m-color-glass-raised", "--m-color-hairline", "--m-elevation-e2", "--m-blur-panel",
+      "--m-size-control", "--m-size-icon", "--m-layout-rail-width", "--m-layout-bar-height", "--m-radius-lg", "--m-layer-overlay",
+    ]) {
+      expect(vars[name], name).toBeTruthy();
+    }
+  });
+
+  it("keeps glass restrained: translucent, never close to opaque", () => {
+    for (const key of ["glass", "glassRaised", "glassDeep"] as const) {
+      const alpha = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(color[key])?.[1]);
+      expect(alpha, key).toBeGreaterThan(0.4);
+      expect(alpha, key).toBeLessThan(0.8);
+    }
+  });
 });
 
 describe("motion", () => {

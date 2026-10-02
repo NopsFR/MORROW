@@ -37,7 +37,8 @@ Environment overrides for the native layer: `MORROW_NODE`, `MORROW_RUNTIME_SCRIP
 pnpm typecheck          # tsc across all packages
 pnpm test               # Vitest: domain, persistence, runtime host, design system
 pnpm test:rust          # cargo test --workspace (includes a real-process bridge test)
-pnpm test:e2e           # Playwright against the UI in Edge, outside the Tauri shell
+pnpm test:e2e           # Playwright in Edge: the dev UI outside the Tauri shell, and the
+                        # production build under the desktop CSP (see D62)
 pnpm check              # typecheck + test + test:rust
 ```
 

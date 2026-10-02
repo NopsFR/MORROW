@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Model, ModelProvider } from "@morrow/schemas";
 import { Button, EmptyState, Mono, SectionHeader, StateMark } from "@morrow/ui";
 import { request } from "../runtime/bridge";
-import { useMorrow } from "../runtime/store";
+import { refreshModels, useMorrow } from "../runtime/store";
 import { useResource } from "../runtime/use-resource";
 import { relativeTime } from "./format";
 import { ViewFrame, WithResource, whenConnected } from "./ViewFrame";
@@ -25,7 +25,8 @@ export function ModelsView() {
   async function refresh() {
     setRefreshing(true);
     try {
-      await request("models.refresh");
+      // Probe providers through the store, so the shell's presence reflects the result too.
+      await refreshModels(true);
     } finally {
       setRefreshing(false);
       void reload();

@@ -470,3 +470,56 @@ real content, and it had been rejected.
 Live on qwen3:4b, the findings given were values ("2.4.1", "MIT license"). The correct
 answers that were still not verified failed on the planner's prose criteria (D60), not on
 this rule.
+
+### D62 — Design tokens are build-time CSS, never a runtime `<style>`
+Found in the visual-foundation audit: the release app rendered unstyled. Tauri adds a
+nonce to the production CSP. With a nonce present, the browser ignores `'unsafe-inline'`,
+so the `<style>` element `installTokens` created at startup was blocked, and every
+`var(--m-*)` resolved to nothing. The dev server has no CSP, so it never showed.
+Earlier release verification checked behaviour, not appearance.
+
+Tokens are still defined once in TypeScript (`packages/design-system`). The desktop Vite
+build serves `tokenStylesheet()` as the virtual module `virtual:morrow-tokens.css`, so
+they ship as a hashed stylesheet like any other CSS. `installTokens` is removed, so it
+cannot come back. A Playwright `production` project runs the built app under the CSP
+from `tauri.conf.json`, with a nonce added as Tauri does. It asserts the tokens apply and
+that there are no CSP violations. Removing the fix makes that test fail.
+
+### D63 — Material is restrained glass over a living environment
+The earlier rule "avoid heavy glass" stands. The shell's planes were opaque, though, so
+the environment (the one carrier of ambient state) was hidden behind 444px of rails.
+
+Panels are now low-alpha translucent material (`glass` 0.58, `glass-raised` 0.72,
+`glass-deep` 0.62) over an 18px backdrop blur, with an elevation that pairs an outer
+shadow with an inset top hairline. They are not frosted slabs, and alpha is held within
+0.4–0.8 by test. The environment gained a smoke layer and stronger fog, all from tokens,
+all driven by the existing ambient parameters, and all stopped under reduced motion.
+
+### D64 — The shell is a navigation rail, a presence bar and a stage
+- **Rail (72px).** Icon and name for each section: work (Workspace, Projects, Memory) at
+  the top, and what MORROW works with (Tools, Models, System) at the bottom. Its only
+  badge is real, the count of permission requests waiting on you.
+- **Presence bar (48px).** It replaces the status line and has three parts. Where you
+  are: the section, plus the open task and its status. What MORROW is doing: one derived
+  presence. The facts behind it: decisions waiting, open tasks, the model, the runtime.
+  Each fact appears only when it applies, and each leads to where it can be acted on.
+- **Stage.** Secondary views are a column of glass panels. The idle workspace holds
+  decisions waiting on you, the command field, the open and recent tasks, and
+  capabilities beside standing permissions.
+- **Task history.** The 40-row history is a panel toggled from the presence bar, rather
+  than a permanent column.
+
+The task view, its selectors and its behaviour are unchanged.
+
+### D65 — Presence is derived from state, in one place
+`runtime/presence.ts` is a pure function of the store. Its order is: no native layer;
+runtime starting or stopped; decisions waiting on you; a task working; a task blocked;
+no usable model; ready. The presence bar shows its result and nothing else. The store
+now also holds a model summary (from `models.status`, and `models.refresh` when "Check
+again" is pressed), so the bar and the Models view read the same fact.
+
+### D66 — The native window frame stays
+A custom title bar would mean reimplementing drag regions, snap layouts, window
+controls and accessibility, all for appearance. The native frame is kept. Its
+background is aligned to `background-deep` (`#08090a`), so there is no flash between
+the frame and the first paint.
