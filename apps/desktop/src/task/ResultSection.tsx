@@ -7,9 +7,10 @@ export function ResultSection({ detail }: { detail: TaskDetail }) {
   if (!result) return null;
   const verified = result.verification.passed;
   return (
-    <section className="tv-section tv-result" aria-label="Result" data-verified={verified}>
+    <section className="tv-section tv-result m-panel m-panel--raised" aria-label="Result" data-verified={verified}>
       <SectionHeader
         title="Result"
+        icon={verified ? "verify" : "alert"}
         trailing={<StateMark tone={verified ? "success" : "warning"} label={verified ? "Verified" : "Not verified"} />}
       />
       <p className="tv-result__answer">{result.answer}</p>

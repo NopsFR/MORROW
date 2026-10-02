@@ -34,17 +34,33 @@ textarea,
   user-select: text;
 }
 
+/* Text for assistive technology only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 ::selection {
   background: var(--m-color-accent-muted);
   color: var(--m-color-text-primary);
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--m-color-border);
+  border: 3px solid transparent;
+  border-radius: var(--m-radius-pill);
+  background: var(--m-color-border-strong) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--m-color-text-disabled) padding-box;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -61,19 +77,23 @@ textarea,
   gap: var(--m-space-2);
 }
 .form__field input {
-  height: 32px;
+  height: var(--m-size-control);
   padding: 0 var(--m-space-3);
   border: 1px solid var(--m-color-border);
-  border-radius: var(--m-radius-xs);
-  background: var(--m-color-surface-inset);
+  border-radius: var(--m-radius-md);
+  background: color-mix(in srgb, var(--m-color-surface-inset) 70%, transparent);
+  box-shadow: var(--m-elevation-inset);
   color: var(--m-color-text-primary);
   font-family: var(--m-font-mono);
   font-size: var(--m-type-meta-size);
   outline: none;
-  transition: border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing);
+  transition:
+    border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
+    box-shadow var(--m-motion-short-duration) var(--m-motion-short-easing);
 }
 .form__field input:focus {
   border-color: var(--m-color-accent-line);
+  box-shadow: var(--m-elevation-inset), 0 0 18px -8px var(--m-color-accent-glow);
 }
 .form__error {
   margin: 0;

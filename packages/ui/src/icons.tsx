@@ -37,6 +37,23 @@ const PATHS = {
   alert: "M10 3.5l7 12.5H3z M10 8.5v3.4 M10 13.8v0.2",
   /** Waiting on something outside MORROW. */
   waiting: "M10 3.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13z M10 6.5V10l2.4 1.6",
+  /** Search within what is loaded. */
+  search: "M8.8 4a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 1 0 0-9.6z M12.3 12.3l4.2 4.2",
+  /** Settings: what MORROW is configured with (sliders, not a gear). */
+  settings: "M4 6h7 M14 6h2 M4 14h2 M9 14h7 M12.5 4.2v3.6 M7.5 12.2v3.6",
+  /** The plan: ordered steps. */
+  plan: "M4 5h2 M8.5 5H16 M4 10h2 M8.5 10H16 M4 15h2 M8.5 15H13",
+  /** Activity: what happened, in order. */
+  activity: "M5 3.5v13 M5 6h6 M5 10.5h9 M5 15h5",
+  /** Evidence: what a tool returned. */
+  evidence: "M5.5 3.5h6l3 3v10h-9z M11.5 3.5v3h3 M8 10h4.5 M8 13h4.5",
+  /** Verification: checked against evidence. */
+  verify: "M10 3.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 1 0 0-13z M7 10.2l2.1 2.1 4-4.2",
+  check: "M5 10.5l3.2 3.2L15 6.5",
+  lock: "M5.5 9h9v7.5h-9z M7.5 9V6.8a2.5 2.5 0 0 1 5 0V9",
+  key: "M7 4.5a3 3 0 1 0 0 6 3 3 0 1 0 0-6z M9.2 9.2l6.8 6.8 M13.4 13.4l1.8-1.8",
+  mail: "M3.5 5.5h13v9h-13z M3.5 6l6.5 5 6.5-5",
+  device: "M4 4.5h12v8.5h-12z M7.5 16h5 M10 13v3",
 } as const;
 
 export type IconName = keyof typeof PATHS;

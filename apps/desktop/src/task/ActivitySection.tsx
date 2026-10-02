@@ -7,8 +7,8 @@ import { formatDuration, formatTime, timeline, type TimelineEntry, type ToolRun 
 export function ActivitySection({ detail, events }: { detail: TaskDetail; events: readonly MorrowEvent[] }) {
   const entries = timeline(events, detail);
   return (
-    <section className="tv-section" aria-label="Activity">
-      <SectionHeader title="Activity" trailing={<Mono>{entries.length} events</Mono>} />
+    <section className="tv-section tv-activity m-panel m-panel--glass" aria-label="Activity">
+      <SectionHeader title="Activity" icon="activity" trailing={<Mono>{entries.length} events</Mono>} />
       {entries.length === 0 ? (
         <EmptyState title="No activity yet" />
       ) : (

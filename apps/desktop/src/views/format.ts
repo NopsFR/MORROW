@@ -3,10 +3,10 @@ import type { InitCheckStatus, RiskLevel, TaskStatus } from "@morrow/schemas";
 
 export const TASK_TONE: Record<TaskStatus, Tone> = {
   IDLE: "neutral",
-  PLANNING: "accent",
-  EXECUTING: "accent",
-  OBSERVING: "accent",
-  VERIFYING: "accent",
+  PLANNING: "signal",
+  EXECUTING: "signal",
+  OBSERVING: "signal",
+  VERIFYING: "signal",
   RECOVERING: "warning",
   WAITING: "warning",
   AWAITING_PERMISSION: "accent",

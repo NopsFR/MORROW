@@ -1,0 +1,35 @@
+/* Memory: search and filter above rows of claims, each with its real actions. */
+.memory {
+  display: grid;
+  gap: var(--m-space-3);
+}
+.memory__tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--m-space-3);
+  align-items: center;
+}
+.memory__row {
+  grid-template-columns: 110px minmax(0, 1fr) 90px 90px 168px;
+  align-items: center;
+}
+.memory__content {
+  overflow-wrap: anywhere;
+}
+.memory__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--m-space-2);
+}
+@media (max-width: 1000px) {
+  .memory__tools {
+    grid-template-columns: 1fr;
+  }
+  .memory__row {
+    grid-template-columns: 100px minmax(0, 1fr) auto;
+  }
+  .memory__row > .m-mono,
+  .memory__row > .row__sub {
+    display: none;
+  }
+}

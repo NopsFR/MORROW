@@ -523,3 +523,63 @@ A custom title bar would mean reimplementing drag regions, snap layouts, window
 controls and accessibility, all for appearance. The native frame is kept. Its
 background is aligned to `background-deep` (`#08090a`), so there is no flash between
 the frame and the first paint.
+
+### D67 — Visual identity: an ink-teal room, brass for MORROW, teal for what is live
+The visual redesign moves from restrained charcoal (D63) to a cinematic environment:
+deep ink-teal, layered fog and light, glass in depth tiers, and a hero plane per screen.
+This supersedes D63's restraint. The identity accent is unchanged: brass (`#c9b58a`)
+stays MORROW's own light (focus, primary intent, MORROW waiting on you).
+
+A second light, the teal **signal** (`#5fd0c4`), marks only activity that is live right
+now: planning, executing, verifying. The ambient state gives it a parameter (`signal`),
+and a test pins it to exactly those states. The references leaned cyan. Brass plus
+signal was chosen over a cyan-led palette, so that identity and live state never compete.
+
+### D68 — Settings holds only what is real; Tools splits into Capabilities and Permissions
+The rail becomes Workspace, Projects, Memory, and Settings. Settings has four pages, each
+backed by runtime state:
+- **Models:** providers, models, and **Routing**. Routing is the first UI for the
+  existing `models.getPreferences` / `models.setPreference`, which the router already
+  honours.
+- **Permissions:** standing grants, revocable. Revoke failures are now shown, not
+  dropped.
+- **Capabilities:** the registered tools.
+- **System.**
+
+There is no Account, Appearance or Devices page, because there are no such settings.
+Memory stays a work section, not a settings page, so its records have one
+representation. The Memory view gains search, a status filter, and the existing
+`memory.accept` / `reject` / `forget` actions (forget asks for confirmation).
+
+### D69 — The task lifecycle is a projection of the record
+`lifecycleOf` (`task/model.ts`) places a task on Plan → Execute → Evidence → Verify →
+Outcome using only persisted data:
+- the plan version and its steps;
+- tool executions and observations;
+- the verification result and events;
+- the `TASK_FAILED` event's `from` state, which says where the task stopped.
+
+A stage is *current* only while the task's status says so. A stage with nothing recorded
+is *none*, never *done*. Only the current stage animates.
+
+### D70 — History is the task records, narrowed but never reordered
+The task history adds search, a status filter, day groups and a hover/focus preview of
+the objective and outcome. All of it filters the loaded `task.list` records (the 50
+newest, labelled as such when capped). Groups are consecutive runs of the list's own
+order (newest first by creation), so the order and selectors the verification scripts
+rely on are unchanged. A hero count opens the history filtered to exactly the tasks it
+counted.
+
+### D71 — Authentication is designed, not built: a boundary document and a dev-only preview
+MORROW has no users, sessions, identity provider or credential store, and the keychain
+`SecretResolver` is unimplemented. `docs/authentication.md` defines the boundary:
+- what sign-in would protect (lock, data at rest, or identity);
+- native-owned OAuth with PKCE in the system browser;
+- no client secrets in the app; tokens only in the OS keychain;
+- TOTP with hashed recovery codes;
+- authentication is never permission.
+
+The sign-in, two-factor, recovery and devices screens exist only as a design preview
+(`#preview/auth`). It is compiled into development builds only (`import.meta.env.DEV`).
+Every field and provider button in it is disabled and labelled "not connected". A
+production e2e test checks the preview is absent.

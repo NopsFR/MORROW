@@ -69,7 +69,7 @@ export function derivePresence(input: PresenceInputs): Presence {
   }
   const working = input.tasks.find((t) => WORKING.includes(t.status));
   if (working) {
-    return { state: "WORKING", tone: "accent", headline: `${PHASE[working.status]} · ${working.title}`, detail: null, active: true };
+    return { state: "WORKING", tone: "signal", headline: `${PHASE[working.status]} · ${working.title}`, detail: null, active: true };
   }
   const blocked = input.tasks.find((t) => t.status === "WAITING");
   if (blocked) {

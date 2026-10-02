@@ -1,34 +1,43 @@
+import { useEffect } from "react";
 import { IconButton, Icon } from "@morrow/ui";
 import { useMorrow, clearNotice } from "../runtime/store";
 import { NavRail } from "./NavRail";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PresenceBar } from "./PresenceBar";
+import { focusCommand, isCommandShortcut } from "./command";
 import { useSection, type Section } from "./navigation";
 import { WorkspaceView } from "../views/workspace/WorkspaceView";
 import { ProjectsView } from "../views/ProjectsView";
 import { MemoryView } from "../views/MemoryView";
-import { ToolsView } from "../views/ToolsView";
-import { ModelsView } from "../views/ModelsView";
-import { SystemView } from "../views/SystemView";
+import { SettingsView } from "../views/settings/SettingsView";
 import "./shell.css";
 
 const VIEWS: Record<Section, () => React.JSX.Element> = {
   WORKSPACE: WorkspaceView,
   PROJECTS: ProjectsView,
   MEMORY: MemoryView,
-  TOOLS: ToolsView,
-  MODELS: ModelsView,
-  SYSTEM: SystemView,
+  SETTINGS: SettingsView,
 };
 
 /**
  * The MORROW environment: a navigation rail, the presence bar (where you are and
- * what MORROW is doing), and the stage. The atmosphere behind it all is the
- * Environment layer, which only real runtime state moves.
+ * what MORROW is doing), and the stage — floating planes over the Environment layer,
+ * which only real runtime state moves.
  */
 export function Shell() {
   const section = useSection();
   const View = VIEWS[section];
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isCommandShortcut(e)) return;
+      e.preventDefault();
+      focusCommand();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="shell">
       <NavRail />

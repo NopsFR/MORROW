@@ -5,8 +5,8 @@ import { verification, type VerificationCheck } from "./model";
 
 const STATUS: Record<string, { tone: Tone; label: string }> = {
   NOT_STARTED: { tone: "neutral", label: "Not started" },
-  COMPOSING: { tone: "accent", label: "Composing result" },
-  RUNNING: { tone: "accent", label: "Verifying" },
+  COMPOSING: { tone: "signal", label: "Composing result" },
+  RUNNING: { tone: "signal", label: "Verifying" },
   REVISING: { tone: "warning", label: "Revising criteria" },
   PASSED: { tone: "success", label: "Passed" },
   FAILED: { tone: "error", label: "Failed" },
@@ -36,9 +36,10 @@ export function VerificationSection({ detail, events }: { detail: TaskDetail; ev
   const v = verification(detail, events);
   const status = STATUS[v.status]!;
   return (
-    <section className="tv-section" aria-label="Verification">
+    <section className="tv-section tv-verification m-panel m-panel--glass" aria-label="Verification" data-state={v.status}>
       <SectionHeader
         title="Verification"
+        icon="verify"
         trailing={<StateMark tone={status.tone} label={status.label} pulse={v.status === "RUNNING" || v.status === "COMPOSING" || v.status === "REVISING"} />}
       />
       {v.status === "NOT_STARTED" ? (

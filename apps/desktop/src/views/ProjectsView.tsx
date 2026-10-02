@@ -5,7 +5,7 @@ import { request } from "../runtime/bridge";
 import { useMorrow } from "../runtime/store";
 import { useResource } from "../runtime/use-resource";
 import { relativeTime } from "./format";
-import { ViewFrame, WithResource, whenConnected } from "./ViewFrame";
+import { ViewFrame, ViewPanel, WithResource, whenConnected } from "./ViewFrame";
 
 export function ProjectsView() {
   const connected = useMorrow((s) => s.runtime?.state === "RUNNING");
@@ -16,8 +16,8 @@ export function ProjectsView() {
       title="Projects"
       lede="A project gives MORROW persistent context and, optionally, a workspace directory. Filesystem tools can only reach inside a project's directory, and still ask permission."
     >
-      <section>
-        <SectionHeader title="Projects" />
+      <ViewPanel>
+        <SectionHeader title="Projects" icon="projects" />
         <WithResource resource={projects}>
           {(list) =>
             list.length === 0 ? (
@@ -35,7 +35,7 @@ export function ProjectsView() {
             )
           }
         </WithResource>
-      </section>
+      </ViewPanel>
       {connected ? <CreateProject onCreated={reload} /> : null}
     </ViewFrame>
   );
@@ -59,8 +59,8 @@ function CreateProject({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <section>
-      <SectionHeader title="New project" />
+    <ViewPanel>
+      <SectionHeader title="New project" icon="projects" />
       <form
         className="form"
         onSubmit={(e) => {
@@ -83,6 +83,6 @@ function CreateProject({ onCreated }: { onCreated: () => void }) {
           </Button>
         </div>
       </form>
-    </section>
+    </ViewPanel>
   );
 }

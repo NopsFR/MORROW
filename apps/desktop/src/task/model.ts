@@ -48,19 +48,19 @@ export function phaseOf(detail: TaskDetail): Phase {
     IDLE: { label: "Queued", tone: "neutral", active: false, doing: "Not started" },
     PLANNING:
       task.statusReason?.code === "REPLANNING"
-        ? { label: "Replanning", tone: "accent", active: true, doing: `Revising plan v${detail.plan?.version ?? 1}: ${reason}` }
+        ? { label: "Replanning", tone: "signal", active: true, doing: `Revising plan v${detail.plan?.version ?? 1}: ${reason}` }
         : task.statusReason?.code === "CRITERIA_REVISION"
           ? { label: "Revising criteria", tone: "warning", active: true, doing: `Verification found criteria of plan v${detail.plan?.version ?? 1} that do not express the objective — see Verification` }
-          : { label: "Planning", tone: "accent", active: true, doing: "Building a plan with the model" },
-    EXECUTING: { label: "Executing", tone: "accent", active: true, doing: step ? `Working on ${position}: ${step.title}` : "Choosing the next action" },
-    OBSERVING: { label: "Observing", tone: "accent", active: true, doing: "Recording what the tool returned" },
+          : { label: "Planning", tone: "signal", active: true, doing: "Building a plan with the model" },
+    EXECUTING: { label: "Executing", tone: "signal", active: true, doing: step ? `Working on ${position}: ${step.title}` : "Choosing the next action" },
+    OBSERVING: { label: "Observing", tone: "signal", active: true, doing: "Recording what the tool returned" },
     AWAITING_PERMISSION: {
       label: "Awaiting permission",
       tone: "accent",
       active: true,
       doing: `Waiting for your decision on a requested operation${step ? ` (${position}: ${step.title})` : ""}`,
     },
-    VERIFYING: { label: "Verifying", tone: "accent", active: true, doing: "Checking the result against the evidence" },
+    VERIFYING: { label: "Verifying", tone: "signal", active: true, doing: "Checking the result against the evidence" },
     RECOVERING: { label: "Recovering", tone: "warning", active: true, doing: reason ?? "Recovering from a failed or denied action" },
     WAITING: { label: "Waiting", tone: "warning", active: false, doing: reason ?? "Waiting" },
     PAUSED: { label: "Paused", tone: "neutral", active: false, doing: reason ?? "Paused" },
@@ -69,6 +69,105 @@ export function phaseOf(detail: TaskDetail): Phase {
     CANCELLED: { label: "Cancelled", tone: "neutral", active: false, doing: reason ?? "Cancelled" },
   };
   return map[task.status];
+}
+
+// ── Lifecycle ──────────────────────────────────────────────────────
+
+export type StageKey = "PLAN" | "EXECUTE" | "EVIDENCE" | "VERIFY" | "OUTCOME";
+/** done: happened · current: happening now · failed: the task stopped here · pending: not reached · none: passed without anything to show */
+export type StageState = "done" | "current" | "failed" | "pending" | "none";
+
+export interface LifecycleStage {
+  readonly key: StageKey;
+  readonly label: string;
+  readonly state: StageState;
+  /** What the record shows for this stage (counts, versions, outcome). */
+  readonly detail: string;
+}
+
+/** Where a task stopped, from the TASK_FAILED event the runtime recorded (the state it failed from). */
+function failedStage(events: readonly MorrowEvent[]): StageKey | null {
+  const failed = [...events].reverse().find((e) => e.type === "TASK_FAILED");
+  if (!failed || failed.type !== "TASK_FAILED") return null;
+  const from = failed.payload.from;
+  if (from === "PLANNING" || from === "IDLE") return "PLAN";
+  if (from === "VERIFYING") return "VERIFY";
+  return "EXECUTE";
+}
+
+/**
+ * The task's lifecycle — plan, execute, gather evidence, verify, outcome — read from what
+ * the runtime persisted: the plan, steps, tool executions, observations and the events
+ * it recorded. Nothing is estimated: a stage is current only while the task's status says
+ * so, and done only if the record shows it happened.
+ */
+export function lifecycleOf(detail: TaskDetail, events: readonly MorrowEvent[]): LifecycleStage[] {
+  const { task, plan } = detail;
+  const status = task.status;
+  const steps = currentPlanSteps(detail);
+  const completedSteps = steps.filter((s) => s.status === "COMPLETED").length;
+  const calls = detail.executions.length;
+  const observations = detail.observations.length;
+  const verificationEvent = [...events].reverse().find((e) => e.type === "VERIFICATION_PASSED" || e.type === "VERIFICATION_FAILED");
+  const verified = task.result?.verification ?? null;
+  const stoppedAt = status === "FAILED" ? (failedStage(events) ?? (verified ? "VERIFY" : plan ? "EXECUTE" : "PLAN")) : null;
+  const executing = status === "EXECUTING" || status === "AWAITING_PERMISSION" || status === "RECOVERING";
+  const ended = status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
+  const reached = (key: StageKey) => {
+    const order: StageKey[] = ["PLAN", "EXECUTE", "EVIDENCE", "VERIFY", "OUTCOME"];
+    return stoppedAt === null || order.indexOf(key) <= order.indexOf(stoppedAt);
+  };
+
+  const planState: StageState =
+    status === "PLANNING" ? "current" : stoppedAt === "PLAN" ? "failed" : plan ? "done" : "pending";
+  const executeState: StageState = executing
+    ? "current"
+    : stoppedAt === "EXECUTE"
+      ? "failed"
+      : !plan || !reached("EXECUTE")
+        ? "pending"
+        : status === "PAUSED" || status === "WAITING" || (steps.length > 0 && completedSteps < steps.length && !ended && status !== "VERIFYING")
+          ? "pending"
+          : "done";
+  const evidenceState: StageState =
+    status === "OBSERVING"
+      ? "current"
+      : observations > 0
+        ? "done"
+        : executeState === "done" || (ended && plan && reached("EVIDENCE"))
+          ? "none"
+          : "pending";
+  const verifyState: StageState =
+    status === "VERIFYING"
+      ? "current"
+      : stoppedAt === "VERIFY"
+        ? "failed"
+        : verificationEvent || verified
+          ? "done"
+          : "pending";
+  const outcomeState: StageState = status === "COMPLETED" ? "done" : status === "FAILED" ? "failed" : status === "CANCELLED" ? "none" : "pending";
+
+  return [
+    { key: "PLAN", label: "Plan", state: planState, detail: plan ? `v${plan.version} · ${steps.length} step${steps.length === 1 ? "" : "s"}` : "No plan yet" },
+    { key: "EXECUTE", label: "Execute", state: executeState, detail: `${completedSteps}/${steps.length} steps · ${calls} tool call${calls === 1 ? "" : "s"}` },
+    { key: "EVIDENCE", label: "Evidence", state: evidenceState, detail: `${observations} observation${observations === 1 ? "" : "s"}` },
+    {
+      key: "VERIFY",
+      label: "Verify",
+      state: verifyState,
+      detail: verified ? humanOutcome(verified.outcome ?? (verified.passed ? "VERIFIED" : "NOT_VERIFIED")) : status === "VERIFYING" ? "Checking the evidence" : "Not verified yet",
+    },
+    {
+      key: "OUTCOME",
+      label: status === "COMPLETED" ? "Complete" : status === "FAILED" ? "Failed" : status === "CANCELLED" ? "Cancelled" : "Outcome",
+      state: outcomeState,
+      detail: ended ? (task.statusReason?.code ?? (status === "COMPLETED" ? "Verified result" : status)) : "Not finished",
+    },
+  ];
+}
+
+function humanOutcome(outcome: string): string {
+  return outcome.charAt(0) + outcome.slice(1).toLowerCase().replace(/_/g, " ");
 }
 
 function clipReason(code: string, message: string): string {

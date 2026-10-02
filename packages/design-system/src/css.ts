@@ -18,8 +18,8 @@ export function cssVariables(): Record<string, string> {
     vars[`--m-type-${name}-family`] = `var(--m-font-${t.family})`;
   }
   for (const [k, v] of Object.entries(space)) vars[`--m-space-${kebab(String(k))}`] = v;
-  for (const [k, v] of Object.entries(radius)) vars[`--m-radius-${k}`] = v;
-  for (const [k, v] of Object.entries(elevation)) vars[`--m-elevation-${k}`] = v;
+  for (const [k, v] of Object.entries(radius)) vars[`--m-radius-${kebab(k)}`] = v;
+  for (const [k, v] of Object.entries(elevation)) vars[`--m-elevation-${kebab(k)}`] = v;
   for (const [k, v] of Object.entries(blur)) vars[`--m-blur-${k}`] = v;
   for (const [k, v] of Object.entries(size)) vars[`--m-size-${kebab(k)}`] = v;
   for (const [k, v] of Object.entries(layout)) vars[`--m-layout-${kebab(k)}`] = v;

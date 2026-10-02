@@ -1,0 +1,143 @@
+/* Settings: a glass index of pages beside the page itself. */
+.settings {
+  max-width: calc(var(--m-layout-content-width) + 260px);
+  margin: 0 auto;
+  padding: var(--m-space-8) var(--m-space-6) 0;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: var(--m-space-6);
+  align-items: start;
+}
+.settings__nav {
+  position: sticky;
+  top: var(--m-space-8);
+  padding: var(--m-space-4) var(--m-space-2);
+  display: grid;
+  gap: var(--m-space-3);
+  animation: rise-in var(--m-motion-long-duration) var(--m-motion-long-easing) both;
+}
+.settings__heading {
+  padding: 0 var(--m-space-3);
+}
+.settings__nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.settings__tab {
+  appearance: none;
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--m-space-3);
+  align-items: start;
+  padding: var(--m-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--m-radius-md);
+  background: transparent;
+  text-align: left;
+  color: var(--m-color-text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
+    border-color var(--m-motion-fast-duration) var(--m-motion-fast-easing),
+    color var(--m-motion-fast-duration) var(--m-motion-fast-easing);
+}
+.settings__tab:hover {
+  background: var(--m-color-wash);
+  color: var(--m-color-text-primary);
+}
+.settings__tab:focus-visible {
+  outline: 1px solid var(--m-color-accent-line);
+  outline-offset: -1px;
+}
+.settings__tab[aria-current="page"] {
+  color: var(--m-color-accent-bright);
+  background: linear-gradient(90deg, var(--m-color-accent-muted), transparent 80%);
+  border-color: var(--m-color-accent-line);
+}
+.settings__tab-text {
+  display: grid;
+  gap: 2px;
+}
+.settings__tab-name {
+  font-size: var(--m-type-body-size);
+  font-weight: 500;
+  color: var(--m-color-text-primary);
+}
+.settings__tab-summary {
+  font-size: var(--m-type-meta-size);
+  line-height: 15px;
+  color: var(--m-color-text-muted);
+}
+.settings__page > .view {
+  padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+.settings__note {
+  margin: 0 0 var(--m-space-4);
+  max-width: 70ch;
+  color: var(--m-color-text-secondary);
+  font-size: var(--m-type-body-small-size);
+  line-height: var(--m-type-body-small-line);
+}
+
+/* Routing: one row per purpose, the model choice beside it. */
+.routing {
+  display: grid;
+  gap: var(--m-space-2);
+}
+.routing__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 280px);
+  gap: var(--m-space-4);
+  align-items: center;
+  padding: var(--m-space-3);
+  border: 1px solid var(--m-color-border-subtle);
+  border-radius: var(--m-radius-md);
+  background: var(--m-color-glass-deep);
+}
+.routing__purpose {
+  display: grid;
+  gap: 2px;
+}
+.routing__name {
+  font-weight: 500;
+  color: var(--m-color-text-primary);
+}
+.routing__detail {
+  font-size: var(--m-type-meta-size);
+  color: var(--m-color-text-muted);
+}
+.routing__select {
+  cursor: pointer;
+}
+.routing__select option {
+  background: var(--m-color-surface-raised);
+  color: var(--m-color-text-primary);
+}
+
+@media (max-width: 1000px) {
+  .settings {
+    grid-template-columns: 1fr;
+    padding: var(--m-space-6) var(--m-space-4) 0;
+  }
+  .settings__nav {
+    position: static;
+  }
+  .settings__nav ul {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+  .settings__tab-summary {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings__nav {
+    animation: none;
+  }
+}

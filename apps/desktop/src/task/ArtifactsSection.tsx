@@ -11,8 +11,8 @@ function bytes(n: number | null): string {
 export function ArtifactsSection({ detail }: { detail: TaskDetail }) {
   if (detail.artifacts.length === 0) return null;
   return (
-    <section className="tv-section" aria-label="Artifacts">
-      <SectionHeader title="Artifacts" trailing={<Mono>{detail.artifacts.length}</Mono>} />
+    <section className="tv-section m-panel m-panel--glass" aria-label="Artifacts">
+      <SectionHeader title="Artifacts" icon="task" trailing={<Mono>{detail.artifacts.length}</Mono>} />
       <ul className="tv-artifacts">
         {detail.artifacts.map((a) => (
           <li key={a.id} className="tv-artifact">

@@ -42,12 +42,19 @@ function TaskList({ title, icon, tasks }: { title: string; icon: "task" | "waiti
               <StateMark tone={TASK_TONE[t.status]} label={humanStatus(t.status)} pulse={ACTIVE_TASK.includes(t.status)} />
               <span className="home-task__title">{t.title}</span>
               <span className="home-task__time">{relativeTime(t.updatedAt)}</span>
+              {outcomeLine(t) ? <span className="home-task__outcome">{outcomeLine(t)}</span> : null}
             </button>
           </li>
         ))}
       </ul>
     </Panel>
   );
+}
+
+/** One line of what a task came to, from its record: the answer, or why it stopped. */
+export function outcomeLine(t: Task): string | null {
+  if (t.status === "COMPLETED") return t.result?.answer ?? null;
+  return t.statusReason?.message ?? null;
 }
 
 /**
@@ -76,7 +83,7 @@ function Reach() {
         title="Capabilities and permissions"
         icon="capability"
         trailing={
-          <Button size="sm" variant="ghost" icon="tools" onClick={() => navigate("TOOLS")}>
+          <Button size="sm" variant="ghost" icon="tools" onClick={() => navigate("SETTINGS", "PERMISSIONS")}>
             Tools
           </Button>
         }

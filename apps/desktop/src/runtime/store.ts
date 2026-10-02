@@ -32,6 +32,7 @@ import { TaskWorkspace, type TaskWorkspaceState } from "./task-workspace";
 import { summarizeModels, type ModelSummary } from "./presence";
 
 export type BootPhase = "INITIALIZING" | "READY" | "DEGRADED";
+export type HistoryFilter = "ALL" | "OPEN" | "COMPLETED" | "FAILED";
 
 export interface MorrowState {
   readonly native: "detecting" | "available" | "unavailable";
@@ -48,6 +49,8 @@ export interface MorrowState {
   readonly inputFocused: boolean;
   /** Whether the full task history panel is open beside the workspace (view state only). */
   readonly historyOpen: boolean;
+  /** Which tasks the history shows (view state only; filters the loaded tasks, never the records). */
+  readonly historyFilter: HistoryFilter;
   readonly transient: { readonly state: "FAILED" | "COMPLETED"; readonly until: number } | null;
   /** Last user-facing failure of an action (not of a task). */
   readonly notice: { readonly code: string; readonly message: string } | null;
@@ -62,6 +65,7 @@ let state: MorrowState = {
   models: null,
   inputFocused: false,
   historyOpen: false,
+  historyFilter: "ALL",
   transient: null,
   notice: null,
 };
@@ -279,6 +283,15 @@ export function setInputFocused(inputFocused: boolean): void {
 
 export function setHistoryOpen(historyOpen: boolean): void {
   if (state.historyOpen !== historyOpen) set({ historyOpen });
+}
+
+/** Open the history showing one kind of task (e.g. from a count in the workspace). */
+export function showHistory(historyFilter: HistoryFilter): void {
+  set({ historyOpen: true, historyFilter });
+}
+
+export function setHistoryFilter(historyFilter: HistoryFilter): void {
+  if (state.historyFilter !== historyFilter) set({ historyFilter });
 }
 
 export function clearNotice(): void {

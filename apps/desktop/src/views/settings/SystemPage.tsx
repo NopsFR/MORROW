@@ -1,12 +1,12 @@
 import { INIT_SUBSYSTEMS, type SystemReport } from "@morrow/schemas";
 import { EmptyState, KeyValue, Mono, SectionHeader, StateMark } from "@morrow/ui";
-import { isNativeAvailable, request, systemReport } from "../runtime/bridge";
-import { useMorrow } from "../runtime/store";
-import { useResource } from "../runtime/use-resource";
-import { CHECK_TONE, bytes } from "./format";
-import { ViewFrame } from "./ViewFrame";
+import { isNativeAvailable, request, systemReport } from "../../runtime/bridge";
+import { useMorrow } from "../../runtime/store";
+import { useResource } from "../../runtime/use-resource";
+import { CHECK_TONE, bytes } from "../format";
+import { ViewFrame, ViewPanel } from "../ViewFrame";
 
-export function SystemView() {
+export function SystemPage() {
   const checks = useMorrow((s) => s.boot.checks);
   const connected = useMorrow((s) => s.runtime?.state === "RUNNING");
   const [report] = useResource(() => (isNativeAvailable() ? systemReport() : Promise.reject(new Error("Native layer unavailable"))), []);
@@ -16,9 +16,9 @@ export function SystemView() {
   );
 
   return (
-    <ViewFrame title="System" lede="What MORROW found when it came online, and the machine it is running on.">
-      <section>
-        <SectionHeader title="Subsystems" />
+    <ViewFrame icon="system" title="System" lede="What MORROW found when it came online, and the machine it is running on.">
+      <ViewPanel>
+        <SectionHeader title="Subsystems" icon="system" />
         <div className="rows">
           {INIT_SUBSYSTEMS.map((s) => {
             const c = checks[s];
@@ -38,9 +38,9 @@ export function SystemView() {
             );
           })}
         </div>
-      </section>
-      <section>
-        <SectionHeader title="Runtime" />
+      </ViewPanel>
+      <ViewPanel>
+        <SectionHeader title="Runtime" icon="runtime" />
         {hello.status === "ready" ? (
           <KeyValue
             rows={[
@@ -52,15 +52,15 @@ export function SystemView() {
         ) : (
           <EmptyState title="Unavailable">{hello.status === "error" ? hello.message : null}</EmptyState>
         )}
-      </section>
-      <section>
-        <SectionHeader title="Host" />
+      </ViewPanel>
+      <ViewPanel>
+        <SectionHeader title="Host" icon="device" />
         {report.status === "ready" ? (
           <HostReport report={report.data} />
         ) : (
           <EmptyState title="Unavailable">{report.status === "error" ? report.message : null}</EmptyState>
         )}
-      </section>
+      </ViewPanel>
     </ViewFrame>
   );
 }

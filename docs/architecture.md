@@ -252,7 +252,7 @@ runtime tables + event log ─ task.detail / events.list ─▶ TaskWorkspace (U
   incrementally by sequence (`afterSequence`), so a dropped notification is healed by
   the next one. It never infers or advances task state, and there is no polling.
 - **`task/model.ts`** holds pure projections from that data to what each panel shows:
-  phase, plan, timeline, tool runs, observations and verification. Nothing is invented;
+  phase, lifecycle (D69), plan, timeline, tool runs, observations and verification. Nothing is invented;
   absent data is shown as absent.
 - **Panels:**
   - header: task id, objective, project, state, elapsed time, model and provider, current phase;

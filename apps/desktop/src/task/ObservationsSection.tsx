@@ -6,8 +6,8 @@ import { formatTime, observations } from "./model";
 export function ObservationsSection({ detail }: { detail: TaskDetail }) {
   const list = observations(detail);
   return (
-    <section className="tv-section" aria-label="Observations">
-      <SectionHeader title="Observations" trailing={<Mono>{list.length}</Mono>} />
+    <section className="tv-section m-panel m-panel--glass" aria-label="Observations">
+      <SectionHeader title="Observations" icon="evidence" trailing={<Mono>{list.length}</Mono>} />
       {list.length === 0 ? (
         <EmptyState title="None yet">Observations are recorded when a tool call succeeds.</EmptyState>
       ) : (

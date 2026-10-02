@@ -6,15 +6,16 @@ import { SelectedTask } from "../../task/SelectedTask";
 import { TaskRail } from "../../task/TaskRail";
 import { PermissionDecision } from "../../task/PermissionDecision";
 import { CommandField } from "./CommandField";
+import { WorkspaceHero } from "./WorkspaceHero";
 import { WorkspaceHome } from "./WorkspaceHome";
 import { ErrorBoundary } from "../../shell/ErrorBoundary";
 import "./workspace.css";
 
 /**
- * The default place. With no task open: decisions waiting on you, the field to say
- * what you want done, and what is open or just finished. With a task open, the
- * task's live operational state fills the stage and the field docks below it.
- * The full task history is a panel opened from the presence bar.
+ * The default place. With no task open: the hero — MORROW's presence and the field to
+ * give it an objective — then decisions waiting on you, and what is open or just
+ * finished. With a task open, the task's live operational state fills the stage and the
+ * field docks below it. The full task history is a panel beside either.
  */
 export function WorkspaceView() {
   const tasks = useMorrow((s) => s.tasks);
@@ -22,7 +23,8 @@ export function WorkspaceView() {
   const historyOpen = useMorrow((s) => s.historyOpen);
   const connected = useMorrow((s) => s.runtime?.state === "RUNNING");
   const { selectedTaskId } = useTaskWorkspace();
-  const [projects] = useResource(() => (connected ? request("projects.list") : Promise.resolve([])), [connected]);
+  const [projectsResource] = useResource(() => (connected ? request("projects.list") : Promise.resolve([])), [connected]);
+  const projects = projectsResource.status === "ready" ? projectsResource.data : [];
 
   // Requests for the open task appear inside it; anything else is shown here.
   const elsewhere = pending.filter((r) => r.taskId === null || r.taskId !== selectedTaskId);
@@ -35,15 +37,11 @@ export function WorkspaceView() {
         ))}
       </section>
     ) : null;
-  const command = (
-    <div className="workspace__command">
-      <CommandField projects={projects.status === "ready" ? projects.data : []} />
-    </div>
-  );
+  const showHistory = historyOpen && tasks.length > 0;
 
   return (
-    <div className="workspace" data-mode={selectedTaskId ? "task" : "idle"}>
-      {historyOpen && tasks.length > 0 ? <TaskRail tasks={tasks.slice(0, 40)} selectedId={selectedTaskId} /> : null}
+    <div className="workspace" data-mode={selectedTaskId ? "task" : "idle"} data-history={showHistory || undefined}>
+      {showHistory ? <TaskRail tasks={tasks} selectedId={selectedTaskId} /> : null}
       {selectedTaskId ? (
         <div className="workspace__main">
           <div className="workspace__stage">
@@ -52,13 +50,15 @@ export function WorkspaceView() {
             </ErrorBoundary>
           </div>
           {decisions}
-          {command}
+          <div className="workspace__command">
+            <CommandField projects={projects} variant="dock" />
+          </div>
         </div>
       ) : (
         <div className="workspace__main workspace__main--idle">
           <div className="workspace__idle">
+            <WorkspaceHero projects={projects} />
             {decisions}
-            {command}
             <WorkspaceHome />
           </div>
         </div>

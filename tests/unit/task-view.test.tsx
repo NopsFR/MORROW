@@ -4,7 +4,7 @@ import type { Id } from "@morrow/shared";
 import type { PermissionRequest } from "@morrow/schemas";
 import { TaskView, type TaskActions } from "../../apps/desktop/src/task/TaskView";
 import { allowedScopes } from "../../apps/desktop/src/task/PermissionDecision";
-import { phaseOf, timeline, verification } from "../../apps/desktop/src/task/model";
+import { lifecycleOf, phaseOf, timeline, verification } from "../../apps/desktop/src/task/model";
 import type { TaskWorkspace } from "../../apps/desktop/src/runtime/task-workspace";
 import {
   callTool,
@@ -73,6 +73,26 @@ async function readTask(options: { answer?: "ALLOW" | "DENY" } = {}) {
   await ctx.workspace.settled();
   return { ...ctx, task, midRun, final: render(ctx.workspace) };
 }
+
+const stages = (list: ReturnType<typeof lifecycleOf>) => Object.fromEntries(list.map((s) => [s.key, s.state]));
+
+describe("task view — lifecycle, from the record", () => {
+  it("shows execution as the current stage while a permission is pending, and every stage done once verified", async () => {
+    const { midRun, final, workspace } = await readTask();
+    expect(midRun).toMatch(/data-state="current" data-stage="EXECUTE"/);
+    expect(midRun).toMatch(/data-state="pending" data-stage="VERIFY"/);
+    const { detail, events } = workspace.getState();
+    expect(stages(lifecycleOf(detail!, events))).toEqual({ PLAN: "done", EXECUTE: "done", EVIDENCE: "done", VERIFY: "done", OUTCOME: "done" });
+    expect(text(final)).toContain("1 observation");
+    expect(text(final)).toContain("Verified");
+  });
+
+  it("never marks a stage current unless the task status says it is happening", async () => {
+    const { workspace } = await readTask();
+    const { detail, events } = workspace.getState();
+    expect(lifecycleOf(detail!, events).filter((s) => s.state === "current")).toEqual([]);
+  });
+});
 
 describe("task view — rendered from real persisted state", () => {
   it("renders the task header from the task record", async () => {
@@ -251,6 +271,9 @@ describe("task view — rendered from real persisted state", () => {
     expect(html).not.toContain('aria-label="Result"'); // no result was produced
     expect(t).toContain("Not yet verified");
     expect(phaseOf(ctx.workspace.getState().detail!).tone).toBe("error");
+    // The lifecycle says where it stopped: execution (denied, then cannot proceed); nothing was verified.
+    const { detail, events } = ctx.workspace.getState();
+    expect(stages(lifecycleOf(detail!, events))).toEqual({ PLAN: "done", EXECUTE: "failed", EVIDENCE: "pending", VERIFY: "pending", OUTCOME: "failed" });
   });
 
   it("shows a verification failure with its reasons and an unverified result", async () => {
@@ -280,6 +303,8 @@ describe("task view — rendered from real persisted state", () => {
     expect(t).toContain("The observation shows 4471, not 9999");
     expect(t).toContain("tools produced observations but the answer cites none");
     expect(t).not.toContain("Memory proposed"); // nothing is proposed from an unverified result
+    const { detail, events } = ctx.workspace.getState();
+    expect(stages(lifecycleOf(detail!, events))).toEqual({ PLAN: "done", EXECUTE: "done", EVIDENCE: "done", VERIFY: "failed", OUTCOME: "failed" });
   });
 
   it("shows a replanned task: current version, why it changed, and the superseded plan", async () => {

@@ -4,6 +4,7 @@ import type { Id } from "@morrow/shared";
 import { Button } from "@morrow/ui";
 import { ActivitySection } from "./ActivitySection";
 import { ArtifactsSection } from "./ArtifactsSection";
+import { LifecycleTrack } from "./LifecycleTrack";
 import { MemoryDecision } from "./MemoryDecision";
 import { ObservationsSection } from "./ObservationsSection";
 import { PermissionDecision, type RespondFn } from "./PermissionDecision";
@@ -48,20 +49,22 @@ export function TaskView({
   const memories = proposedMemories(detail);
   return (
     <article className="tv" aria-label="Task" data-status={task.status}>
-      <div className="tv-toolbar">
-        {PAUSABLE.has(task.status) ? <Button onClick={actions.pause}>Pause</Button> : null}
-        {task.status === "PAUSED" ? <Button variant="primary" onClick={actions.resume}>Resume</Button> : null}
-        {!TERMINAL.has(task.status) ? (
-          <Button variant="danger" onClick={actions.cancel}>
-            Cancel
+      <section className="tv-hero m-panel m-panel--hero" aria-label="Task overview">
+        <div className="tv-toolbar">
+          {PAUSABLE.has(task.status) ? <Button size="sm" onClick={actions.pause}>Pause</Button> : null}
+          {task.status === "PAUSED" ? <Button size="sm" variant="primary" onClick={actions.resume}>Resume</Button> : null}
+          {!TERMINAL.has(task.status) ? (
+            <Button size="sm" variant="danger" onClick={actions.cancel}>
+              Cancel
+            </Button>
+          ) : null}
+          <Button size="sm" variant="ghost" icon="close" onClick={actions.close} aria-label="Close task view">
+            Close
           </Button>
-        ) : null}
-        <Button onClick={actions.close} aria-label="Close task view">
-          Close
-        </Button>
-      </div>
-
-      <TaskHeader detail={detail} now={now} />
+        </div>
+        <TaskHeader detail={detail} now={now} />
+        <LifecycleTrack detail={detail} events={events} />
+      </section>
 
       {permissions.length > 0 || memories.length > 0 ? (
         <div className="tv-decisions">

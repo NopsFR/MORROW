@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { color } from "../../packages/design-system/src/tokens";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
@@ -32,6 +33,14 @@ async function underProductionCsp(page: Page): Promise<string[]> {
   return violations;
 }
 
+test("design previews are development-only: the production build has no authentication preview", async ({ page }) => {
+  await underProductionCsp(page);
+  await page.goto("/#preview/auth");
+  await expect(page.getByRole("heading", { name: "MORROW" })).toBeVisible();
+  await expect(page.getByText(/Design preview/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Continue with/ })).toHaveCount(0);
+});
+
 test("the production build is styled by MORROW's tokens under the desktop CSP", async ({ page }) => {
   const violations = await underProductionCsp(page);
   await page.goto("/");
@@ -45,8 +54,9 @@ test("the production build is styled by MORROW's tokens under the desktop CSP", 
       bodyFont: getComputedStyle(document.body).fontFamily,
     };
   });
-  expect(applied.background).toBe("#0d0e10");
-  expect(applied.accent).toBe("#c9b58a");
+  // The built stylesheet carries exactly the TypeScript tokens (the single source of truth).
+  expect(applied.background).toBe(color.background);
+  expect(applied.accent).toBe(color.accent);
   expect(applied.bodyFont).toContain("IBM Plex Sans");
   expect(violations).toEqual([]);
 });

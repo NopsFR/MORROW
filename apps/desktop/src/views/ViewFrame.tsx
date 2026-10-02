@@ -1,17 +1,28 @@
-import type { ReactNode } from "react";
-import { EmptyState, ErrorState, Icon, Progress } from "@morrow/ui";
+import type { HTMLAttributes, ReactNode } from "react";
+import { EmptyState, ErrorState, Icon, Progress, type IconName } from "@morrow/ui";
 import { useMorrow } from "../runtime/store";
 import type { Resource } from "../runtime/use-resource";
 import { SECTION_META, useSection } from "../shell/navigation";
 
-/** A section's page: its glyph, title and what it is for, then glass panels of content. */
-export function ViewFrame({ title, lede, children }: { title: string; lede?: string; children: ReactNode }) {
+/** A page: its glyph, title and what it is for, then glass panels of content. */
+export function ViewFrame({
+  title,
+  lede,
+  icon,
+  children,
+}: {
+  title: string;
+  lede?: string;
+  /** Defaults to the current section's icon. */
+  icon?: IconName;
+  children: ReactNode;
+}) {
   const section = useSection();
   return (
     <div className="view">
       <header className="view__header">
         <span className="view__glyph" aria-hidden="true">
-          <Icon name={SECTION_META[section].icon} size="lg" />
+          <Icon name={icon ?? SECTION_META[section].icon} size="lg" />
         </span>
         <div>
           <h2 className="view__title">{title}</h2>
@@ -21,6 +32,11 @@ export function ViewFrame({ title, lede, children }: { title: string; lede?: str
       {children}
     </div>
   );
+}
+
+/** One glass panel of a page. */
+export function ViewPanel({ className, ...rest }: HTMLAttributes<HTMLElement>) {
+  return <section className={["m-panel", "m-panel--glass", "view__panel", className].filter(Boolean).join(" ")} {...rest} />;
 }
 
 /** Renders a runtime-backed resource, or says plainly why it cannot. */

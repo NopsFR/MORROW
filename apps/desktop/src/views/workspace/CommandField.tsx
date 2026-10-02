@@ -1,16 +1,20 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import type { Id } from "@morrow/shared";
 import type { Project } from "@morrow/schemas";
-import { TextArea } from "@morrow/ui";
+import { Button, Icon, Kbd, TextArea } from "@morrow/ui";
 import { setInputFocused, submitObjective, useMorrow } from "../../runtime/store";
 
-/** The one place the user tells MORROW what they want. */
-export function CommandField({ projects }: { projects: readonly Project[] }) {
+/**
+ * The one place the user tells MORROW what they want. `hero` is the large field at the
+ * centre of the idle workspace; `dock` is the compact field below an open task.
+ */
+export function CommandField({ projects, variant = "hero" }: { projects: readonly Project[]; variant?: "hero" | "dock" }) {
   const [text, setText] = useState("");
   const [projectId, setProjectId] = useState<Id<"project"> | "">("");
   const [submitting, setSubmitting] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const connected = useMorrow((s) => s.runtime?.state === "RUNNING");
+  const ready = connected && text.trim().length > 0 && !submitting;
 
   async function submit() {
     if (!text.trim() || submitting || !connected) return;
@@ -28,10 +32,12 @@ export function CommandField({ projects }: { projects: readonly Project[] }) {
     }
   }
 
+  const minRows = variant === "hero" ? 3 : 1;
   return (
     <form
-      className="command"
+      className={`command command--${variant}`}
       data-disabled={!connected || undefined}
+      data-busy={submitting || undefined}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -40,7 +46,7 @@ export function CommandField({ projects }: { projects: readonly Project[] }) {
       <TextArea
         ref={ref}
         className="command__input"
-        rows={Math.min(8, Math.max(2, text.split("\n").length))}
+        rows={Math.min(8, Math.max(minRows, text.split("\n").length))}
         placeholder="Tell MORROW what you want to accomplish..."
         aria-label="Objective"
         value={text}
@@ -52,6 +58,7 @@ export function CommandField({ projects }: { projects: readonly Project[] }) {
       />
       <div className="command__footer">
         <label className="command__scope">
+          <Icon name="projects" size="sm" />
           <span className="m-label m-tone-muted">Scope</span>
           <select value={projectId} onChange={(e) => setProjectId(e.target.value as Id<"project"> | "")}>
             <option value="">No project</option>
@@ -63,8 +70,17 @@ export function CommandField({ projects }: { projects: readonly Project[] }) {
           </select>
         </label>
         <span className="command__hint">
-          {connected ? "↵ submit · ⇧↵ new line" : "Agent runtime not connected"}
+          {connected ? (
+            <>
+              <Kbd>↵</Kbd> start · <Kbd>⇧↵</Kbd> new line
+            </>
+          ) : (
+            "Agent runtime not connected"
+          )}
         </span>
+        <Button type="submit" variant="primary" size={variant === "hero" ? "md" : "sm"} disabled={!ready} icon="submit">
+          {submitting ? "Starting" : "Start"}
+        </Button>
       </div>
     </form>
   );

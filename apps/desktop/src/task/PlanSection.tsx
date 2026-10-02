@@ -4,7 +4,7 @@ import { planSteps, type PlanStepView } from "./model";
 
 const STEP_TONE: Record<string, Tone> = {
   PENDING: "neutral",
-  RUNNING: "accent",
+  RUNNING: "signal",
   COMPLETED: "success",
   FAILED: "error",
   SKIPPED: "neutral",
@@ -26,8 +26,8 @@ export function PlanSection({ detail }: { detail: TaskDetail }) {
     (plan?.criteria ?? []).filter((c) => c.revisionOf && !(previous?.criteria ?? []).some((p) => p.id === c.id)).map((c) => c.id as string),
   );
   return (
-    <section className="tv-section" aria-label="Plan">
-      <SectionHeader title="Plan" trailing={plan ? <Mono data-testid="plan-version">v{plan.version}</Mono> : null} />
+    <section className="tv-section m-panel m-panel--glass" aria-label="Plan">
+      <SectionHeader title="Plan" icon="plan" trailing={plan ? <Mono data-testid="plan-version">v{plan.version}</Mono> : null} />
       {plan && plan.version > 1 ? (
         <div className="tv-replan" data-testid="plan-replan-reason">
           <span className="m-label m-tone-accent">{revisedHere.size > 0 ? "Criteria revised after verification" : "Revised after observation"}</span>

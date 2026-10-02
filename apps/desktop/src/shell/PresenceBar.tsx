@@ -1,10 +1,11 @@
-import { Count, Icon, IconButton, StateMark, type Tone } from "@morrow/ui";
+import { Count, Icon, IconButton, Kbd, StateMark, type Tone } from "@morrow/ui";
 import type { RuntimeStatus } from "../runtime/bridge";
 import { describeModels } from "../runtime/presence";
 import { setHistoryOpen, useMorrow, useTaskWorkspace } from "../runtime/store";
 import { usePresence } from "../runtime/use-presence";
 import { TASK_TONE, TERMINAL_TASK, humanStatus } from "../views/format";
-import { SECTION_META, navigate, useSection } from "./navigation";
+import { SECTION_META, SETTINGS_META, navigate, useSection, useSettingsPage } from "./navigation";
+import { focusCommand } from "./command";
 
 /**
  * The top of the environment: where you are, and what MORROW is doing. Every item
@@ -13,6 +14,7 @@ import { SECTION_META, navigate, useSection } from "./navigation";
  */
 export function PresenceBar() {
   const section = useSection();
+  const page = useSettingsPage();
   const presence = usePresence();
   const native = useMorrow((s) => s.native);
   const runtime = useMorrow((s) => s.runtime);
@@ -27,7 +29,7 @@ export function PresenceBar() {
   const r = runtimeMark(native, runtime);
 
   return (
-    <header className="presence-bar">
+    <header className="presence-bar m-panel m-panel--glass">
       <div className="presence-bar__location">
         {section === "WORKSPACE" && hasTasks ? (
           <IconButton
@@ -39,6 +41,12 @@ export function PresenceBar() {
         ) : null}
         <Icon name={meta.icon} size="sm" className="presence-bar__icon" />
         <span className="presence-bar__section">{meta.name}</span>
+        {section === "SETTINGS" ? (
+          <>
+            <Icon name="chevronRight" size="sm" className="presence-bar__sep" />
+            <span className="presence-bar__task">{SETTINGS_META[page].name}</span>
+          </>
+        ) : null}
         {task ? (
           <>
             <Icon name="chevronRight" size="sm" className="presence-bar__sep" />
@@ -53,6 +61,11 @@ export function PresenceBar() {
       </div>
 
       <div className="presence-bar__facts">
+        <button type="button" className="presence-bar__fact presence-bar__fact--action presence-bar__command" onClick={focusCommand} title="New objective (Ctrl+K)">
+          <Icon name="submit" size="sm" />
+          <span>Objective</span>
+          <Kbd>Ctrl K</Kbd>
+        </button>
         {pending > 0 ? (
           <button type="button" className="presence-bar__fact presence-bar__fact--action" onClick={() => navigate("WORKSPACE")}>
             <Icon name="permission" size="sm" />
@@ -67,12 +80,12 @@ export function PresenceBar() {
           </span>
         ) : null}
         {runtime?.state === "RUNNING" ? (
-          <button type="button" className="presence-bar__fact presence-bar__fact--action" onClick={() => navigate("MODELS")} title="Models">
+          <button type="button" className="presence-bar__fact presence-bar__fact--action" onClick={() => navigate("SETTINGS", "MODELS")} title="Models">
             <Icon name="models" size="sm" />
             <span>{models ? describeModels(models) : "Models"}</span>
           </button>
         ) : null}
-        <button type="button" className="presence-bar__fact presence-bar__fact--action" onClick={() => navigate("SYSTEM")} title="System">
+        <button type="button" className="presence-bar__fact presence-bar__fact--action" onClick={() => navigate("SETTINGS", "SYSTEM")} title="System">
           <StateMark tone={r.tone} label={r.label} />
         </button>
       </div>
